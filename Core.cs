@@ -14,7 +14,7 @@ using static EFT.ScenesPreset;
 
 namespace FontReplace
 {
-    [BepInPlugin("hiddenhiragi.Volcano.fontreplace", "Volcano-FontReplace 火山家的中文字体切换", "1.1.2")]
+    [BepInPlugin("hiddenhiragi.Volcano.fontreplace", "Volcano-FontReplace 火山家的中文字体切换", "1.2.0")]
     public partial class FontReplacePlugin : BaseUnityPlugin
     {
         private const string ChineseLocaleKey = "ch";

@@ -11,6 +11,10 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using static EFT.ScenesPreset;
+using System.Runtime.CompilerServices;
+using Diz.Binding;
+using EFT;
+using EFT.Prestige;
 
 namespace FontReplace
 {
@@ -30,19 +34,19 @@ namespace FontReplace
             private static MemberInfo s_fontMapMember;
             private static MemberInfo s_bindableEventMember;
 
-            public static LocaleManagerClass GetInstance(BepInEx.Logging.ManualLogSource logger)
+            public static LocalizationManager GetInstance(BepInEx.Logging.ManualLogSource logger)
             {
                 try
                 {
-                    var t = typeof(LocaleManagerClass);
+                    var t = typeof(LocalizationManager);
 
                     // 1) 优先按常见名字取单例
                     if (s_singletonProp == null)
                     {
-                        s_singletonProp = t.GetProperty("LocaleManagerClass", AnyStatic);
+                        s_singletonProp = t.GetProperty("LocalizationManager", AnyStatic);
                         if (s_singletonProp == null || s_singletonProp.PropertyType != t)
                         {
-                            // 2) 兜底：找到任意一个返回 LocaleManagerClass 的静态属性
+                            // 2) 兜底：找到任意一个返回 LocalizationManager 的静态属性
                             var props = t.GetProperties(AnyStatic);
                             for (int i = 0; i < props.Length; i++)
                             {
@@ -58,7 +62,7 @@ namespace FontReplace
 
                     if (s_singletonProp != null)
                     {
-                        var v = s_singletonProp.GetValue(null, null) as LocaleManagerClass;
+                        var v = s_singletonProp.GetValue(null, null) as LocalizationManager;
                         if (v != null)
                         {
                             return v;
@@ -82,7 +86,7 @@ namespace FontReplace
 
                     if (s_singletonField != null)
                     {
-                        return s_singletonField.GetValue(null) as LocaleManagerClass;
+                        return s_singletonField.GetValue(null) as LocalizationManager;
                     }
                 }
                 catch (Exception e)
@@ -96,7 +100,7 @@ namespace FontReplace
                 return null;
             }
 
-            public static string GetCurrentLanguage(LocaleManagerClass lm)
+            public static string GetCurrentLanguage(LocalizationManager lm)
             {
                 // 源码属性 String_0 (默认 en)
                 string v;
@@ -107,7 +111,7 @@ namespace FontReplace
                 return "en";
             }
 
-            public static string GetAppliedLanguage(LocaleManagerClass lm)
+            public static string GetAppliedLanguage(LocalizationManager lm)
             {
                 // 源码字段 String_1
                 string v;
@@ -118,7 +122,7 @@ namespace FontReplace
                 return string.Empty;
             }
 
-            public static void TrySetAppliedLanguage(LocaleManagerClass lm, string lang, BepInEx.Logging.ManualLogSource logger)
+            public static void TrySetAppliedLanguage(LocalizationManager lm, string lang, BepInEx.Logging.ManualLogSource logger)
             {
                 if (!TrySetString(lm, ref s_appliedLangMember, new[] { "String_1", "AppliedLanguage", "CurrentAppliedLanguage" }, lang))
                 {
@@ -130,7 +134,7 @@ namespace FontReplace
                 }
             }
 
-            public static TMP_FontAsset TryGetLocaleFont(LocaleManagerClass lm, string locale)
+            public static TMP_FontAsset TryGetLocaleFont(LocalizationManager lm, string locale)
             {
                 var map = GetLocaleFontMap(lm);
                 if (map == null)
@@ -147,7 +151,7 @@ namespace FontReplace
                 return null;
             }
 
-            public static void TrySetLocaleFont(LocaleManagerClass lm, string locale, TMP_FontAsset font, BepInEx.Logging.ManualLogSource logger)
+            public static void TrySetLocaleFont(LocalizationManager lm, string locale, TMP_FontAsset font, BepInEx.Logging.ManualLogSource logger)
             {
                 var map = GetLocaleFontMap(lm);
                 if (map == null)
@@ -168,7 +172,7 @@ namespace FontReplace
                 }
             }
 
-            public static void TryApplyLocaleInternal(LocaleManagerClass lm, string locale, BepInEx.Logging.ManualLogSource logger)
+            public static void TryApplyLocaleInternal(LocalizationManager lm, string locale, BepInEx.Logging.ManualLogSource logger)
             {
                 try
                 {
@@ -196,7 +200,7 @@ namespace FontReplace
                 }
             }
 
-            public static void TryInvokeLocaleUpdated(LocaleManagerClass lm, BepInEx.Logging.ManualLogSource logger)
+            public static void TryInvokeLocaleUpdated(LocalizationManager lm, BepInEx.Logging.ManualLogSource logger)
             {
                 try
                 {
@@ -222,7 +226,7 @@ namespace FontReplace
                 }
             }
 
-            public static Action TrySubscribeLocaleUpdate(LocaleManagerClass lm, Action callback, BepInEx.Logging.ManualLogSource logger)
+            public static Action TrySubscribeLocaleUpdate(LocalizationManager lm, Action callback, BepInEx.Logging.ManualLogSource logger)
             {
                 try
                 {
@@ -248,7 +252,7 @@ namespace FontReplace
                 return null;
             }
 
-            private static IDictionary<string, TMP_FontAsset> GetLocaleFontMap(LocaleManagerClass lm)
+            private static IDictionary<string, TMP_FontAsset> GetLocaleFontMap(LocalizationManager lm)
             {
                 if (lm == null)
                 {
@@ -326,7 +330,7 @@ namespace FontReplace
                 return null;
             }
 
-            private static object GetBindableEvent(LocaleManagerClass lm)
+            private static object GetBindableEvent(LocalizationManager lm)
             {
                 if (lm == null)
                 {

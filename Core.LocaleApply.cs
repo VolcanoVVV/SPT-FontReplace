@@ -11,6 +11,10 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using static EFT.ScenesPreset;
+using System.Runtime.CompilerServices;
+using Diz.Binding;
+using EFT;
+using EFT.Prestige;
 
 namespace FontReplace
 {
@@ -120,7 +124,7 @@ namespace FontReplace
             TryApplyChineseFont(localeManager, "update");
         }
 
-        private void TryApplyChineseFont(LocaleManagerClass localeManager, string reason)
+        private void TryApplyChineseFont(LocalizationManager localeManager, string reason)
         {
             if (_modEnabled != null && !_modEnabled.Value)
             {
@@ -186,7 +190,7 @@ namespace FontReplace
             }
         }
 
-        private void ConfigureFallbacks(LocaleManagerClass localeManager)
+        private void ConfigureFallbacks(LocalizationManager localeManager)
         {
             if (_chineseFontAsset == null)
             {
