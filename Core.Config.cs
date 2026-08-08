@@ -67,7 +67,7 @@ namespace FontReplace
                     null,
                     new ConfigurationManagerAttributes
                     {
-                        DispName = "显示原版字母 （需重启游戏）",
+                        DispName = "显示原版字母",
                         HideDefaultButton = false
                     }));
 
@@ -80,7 +80,7 @@ namespace FontReplace
                     null,
                     new ConfigurationManagerAttributes
                     {
-                        DispName = "显示原版数字 （需重启游戏）",
+                        DispName = "显示原版数字",
                         HideDefaultButton = false
                     }));
 
