@@ -45,6 +45,19 @@ namespace FontReplace
                         HideDefaultButton = true
                     }));
 
+            _fontScale = Config.Bind(
+                FontSection,
+                "字体缩放",
+                1.0f,
+                new ConfigDescription(
+                    "调整中文字体的整体显示大小（1.0 = 字体资源原始大小）。\n修改后即时生效，无需重启游戏。",
+                    new AcceptableValueRange<float>(0.5f, 2.0f),
+                    new ConfigurationManagerAttributes
+                    {
+                        DispName = "字体缩放",
+                        HideDefaultButton = false
+                    }));
+
             _keepOriginalLatin = Config.Bind(
                 KeepOriginalSection,
                 "显示原版字母",
@@ -72,6 +85,8 @@ namespace FontReplace
                     }));
 
             _modEnabled.SettingChanged += OnModEnabledSettingChanged;
+            // 字体缩放变化时，立刻应用并刷新已有文本
+            _fontScale.SettingChanged += OnFontScaleSettingChanged;
             // 当开关改变时，立刻刷新一次已有文本
             _keepOriginalLatin.SettingChanged += OnKeepOriginalSettingChanged;
             _keepOriginalDigits.SettingChanged += OnKeepOriginalSettingChanged;

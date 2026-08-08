@@ -63,6 +63,12 @@ namespace FontReplace
                 return;
             }
 
+            // 判定结果依赖于这两个开关的取值，开关变化后缓存的判定已失效，先清空再全量刷新
+            _handledTmpContent.Clear();
+            _handledUiContent.Clear();
+            _handledTmpKeepOriginal.Clear();
+            _handledUiKeepOriginal.Clear();
+
             // 只有在“中文字体覆盖”处于启用状态时才刷新，避免在非中文语言下误改字体
             if (_isChineseLocaleActive)
             {

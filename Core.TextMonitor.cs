@@ -1,16 +1,13 @@
 using BepInEx;
 using BepInEx.Configuration;
+using HarmonyLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using static EFT.ScenesPreset;
 
 namespace FontReplace
 {
@@ -18,29 +15,69 @@ namespace FontReplace
     {
         private void SetupTextMonitoring()
         {
-            if (_tmpTextChangedHooked || _pollCoroutine != null)
+            if (_textMonitorPatched)
             {
                 return;
             }
 
-            TryHookTmpTextChangedEvent();
-
-            if (!_tmpTextChangedHooked && _pollCoroutine == null)
+            try
             {
-                _pollCoroutine = StartCoroutine(PollTextLoop());
-                Logger.LogInfo("[FontReplace] 未能订阅 TMP 文本变化事件，已启用轮询模式（每秒检查一次）。");
+                if (_harmony == null)
+                {
+                    _harmony = new Harmony("hiddenhiragi.Volcano.fontreplace");
+                }
+
+                var tmpPostfix = new HarmonyMethod(AccessTools.Method(typeof(FontReplacePlugin), nameof(OnTmpTextDirty)));
+                var uiPostfix = new HarmonyMethod(AccessTools.Method(typeof(FontReplacePlugin), nameof(OnUiTextDirty)));
+
+                var patched = new HashSet<MethodInfo>();
+
+                // TMP：text setter（TextMeshProUGUI/TextMeshPro 均未重写 setter，补基类一处即可覆盖全部 TMP 文本）
+                PatchOnce(AccessTools.PropertySetter(typeof(TMP_Text), "text"), tmpPostfix, patched);
+
+                // TMP：OnEnable（对象池复用 / 重新激活时兜底，替代旧轮询的“补漏”角色）
+                PatchOnce(AccessTools.Method(typeof(TextMeshProUGUI), "OnEnable"), tmpPostfix, patched);
+                PatchOnce(AccessTools.Method(typeof(TextMeshPro), "OnEnable"), tmpPostfix, patched);
+
+                // UnityEngine.UI.Text：text setter + OnEnable
+                PatchOnce(AccessTools.PropertySetter(typeof(Text), "text"), uiPostfix, patched);
+                PatchOnce(AccessTools.Method(typeof(Text), "OnEnable"), uiPostfix, patched);
+
+                _textMonitorPatched = patched.Count > 0;
+
+                if (_textMonitorPatched)
+                {
+                    Logger.LogInfo("[FontReplace] 已通过 Harmony 监听文本变化（用于英文字母/数字保留原版），共 patch " + patched.Count + " 个方法。");
+                }
+                else
+                {
+                    Logger.LogWarning("[FontReplace] 未能 patch 任何文本方法，英文字母/数字保留原版将不会自动生效。");
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning("[FontReplace] Harmony 监听文本变化失败: " + e);
             }
         }
 
+        private void PatchOnce(MethodInfo target, HarmonyMethod postfix, HashSet<MethodInfo> patched)
+        {
+            if (target == null || postfix == null || patched.Contains(target))
+            {
+                return;
+            }
+
+            _harmony.Patch(target, postfix: postfix);
+            patched.Add(target);
+        }
 
         private void TeardownTextMonitoring()
         {
-            // 解除 TMP 文本变化事件
             try
             {
-                if (_tmpOnTextChangedEvent != null && _tmpOnTextChangedHandler != null)
+                if (_textMonitorPatched && _harmony != null)
                 {
-                    _tmpOnTextChangedEvent.RemoveEventHandler(null, _tmpOnTextChangedHandler);
+                    _harmony.UnpatchSelf();
                 }
             }
             catch
@@ -49,260 +86,189 @@ namespace FontReplace
             }
             finally
             {
-                _tmpOnTextChangedEvent = null;
-                _tmpOnTextChangedHandler = null;
-                _tmpTextChangedHooked = false;
+                _textMonitorPatched = false;
             }
 
-            // 停止轮询
-            try
+            _dirtyTmpTexts.Clear();
+            _dirtyUiTexts.Clear();
+            _handledTmpContent.Clear();
+            _handledUiContent.Clear();
+            _handledTmpKeepOriginal.Clear();
+            _handledUiKeepOriginal.Clear();
+        }
+
+        // ===== Harmony postfix（必须为静态方法，通过 s_instance 转回插件实例）=====
+
+        private static void OnTmpTextDirty(TMP_Text __instance)
+        {
+            var p = s_instance;
+            if (p != null)
             {
-                if (_pollCoroutine != null)
-                {
-                    StopCoroutine(_pollCoroutine);
-                    _pollCoroutine = null;
-                }
-            }
-            catch
-            {
-                // 忽略
+                p.MarkTmpTextDirty(__instance);
             }
         }
 
-        private void TryHookTmpTextChangedEvent()
+        private static void OnUiTextDirty(Text __instance)
         {
-            try
+            var p = s_instance;
+            if (p != null)
             {
-                var evt = typeof(TMP_Text).GetEvent("onTextChanged", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                if (evt == null || evt.EventHandlerType == null)
-                {
-                    return;
-                }
-
-                // 根据事件委托签名，选择能匹配的回调方法
-                var invoke = evt.EventHandlerType.GetMethod("Invoke");
-                if (invoke == null)
-                {
-                    return;
-                }
-
-                var ps = invoke.GetParameters();
-                if (ps == null || ps.Length != 1)
-                {
-                    return;
-                }
-
-                var pType = ps[0].ParameterType;
-                MethodInfo mi = GetType().GetMethod("OnAnyTmpTextChanged", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { pType }, null);
-                if (mi == null)
-                {
-                    // 再兜底一次：尝试 UnityEngine.Object 参数版本
-                    mi = GetType().GetMethod("OnAnyTmpTextChanged", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(UnityEngine.Object) }, null);
-                }
-
-                if (mi == null)
-                {
-                    return;
-                }
-
-                var del = Delegate.CreateDelegate(evt.EventHandlerType, this, mi, false);
-                if (del == null)
-                {
-                    return;
-                }
-
-                evt.AddEventHandler(null, del);
-
-                _tmpOnTextChangedEvent = evt;
-                _tmpOnTextChangedHandler = del;
-                _tmpTextChangedHooked = true;
-
-                Logger.LogInfo("[FontReplace] 已订阅 TMP_Text.onTextChanged（用于英文字母/数字保留原版）。");
-            }
-            catch (Exception e)
-            {
-                Logger.LogWarning("[FontReplace] 订阅 TMP_Text.onTextChanged 失败: " + e);
+                p.MarkUiTextDirty(__instance);
             }
         }
 
-        private void OnAnyTmpTextChanged(UnityEngine.Object obj)
-        {
-            if (_isHandlingTextChanged)
-            {
-                return;
-            }
+        // ===== 脏标记 + 帧末批量处理（避免页面切换时单帧内大量同步重建导致卡顿）=====
 
+        private bool ShouldMonitorTexts()
+        {
             if (_modEnabled != null && !_modEnabled.Value)
             {
-                return;
+                return false;
             }
 
-            if (!_isChineseLocaleActive)
+            if (!_isChineseLocaleActive || _chineseFontAsset == null)
             {
-                return;
-            }
-
-            if (_chineseFontAsset == null)
-            {
-                return;
+                return false;
             }
 
             if (_keepOriginalLatin == null || _keepOriginalDigits == null)
             {
-                return;
+                return false;
             }
 
-            if (!_keepOriginalLatin.Value && !_keepOriginalDigits.Value)
+            return _keepOriginalLatin.Value || _keepOriginalDigits.Value;
+        }
+
+        private void MarkTmpTextDirty(TMP_Text text)
+        {
+            if (!ShouldMonitorTexts())
             {
                 return;
             }
 
-            var text = obj as TMP_Text;
+            if (text != null && _dirtyTmpTexts.Add(text))
+            {
+                ScheduleDirtyFlush();
+            }
+        }
+
+        private void MarkUiTextDirty(Text text)
+        {
+            if (!ShouldMonitorTexts())
+            {
+                return;
+            }
+
+            if (text != null && _dirtyUiTexts.Add(text))
+            {
+                ScheduleDirtyFlush();
+            }
+        }
+
+        private void ScheduleDirtyFlush()
+        {
+            if (_flushScheduled)
+            {
+                return;
+            }
+
+            _flushScheduled = true;
+            StartCoroutine(FlushDirtyTextsAtEndOfFrame());
+        }
+
+        private IEnumerator FlushDirtyTextsAtEndOfFrame()
+        {
+            // 同一帧内的所有文本变化合并为帧末一次处理
+            yield return WaitEndOfFrame;
+            _flushScheduled = false;
+
+            if (!ShouldMonitorTexts())
+            {
+                _dirtyTmpTexts.Clear();
+                _dirtyUiTexts.Clear();
+                yield break;
+            }
+
+            if (_dirtyTmpTexts.Count > 0)
+            {
+                var snapshot = new List<TMP_Text>(_dirtyTmpTexts);
+                _dirtyTmpTexts.Clear();
+
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    ProcessTmpText(snapshot[i]);
+                }
+            }
+
+            if (_dirtyUiTexts.Count > 0)
+            {
+                var snapshot = new List<Text>(_dirtyUiTexts);
+                _dirtyUiTexts.Clear();
+
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    ProcessUiText(snapshot[i]);
+                }
+            }
+        }
+
+        private void ProcessTmpText(TMP_Text text)
+        {
             if (text == null)
             {
                 return;
             }
 
-            _isHandlingTextChanged = true;
-            try
+            int id = text.GetInstanceID();
+            string curr = text.text ?? string.Empty;
+
+            // 内容未变化时跳过字符串扫描，直接复用上次的判定结果（仅校验字体是否仍然正确）
+            bool keep;
+            string last;
+            if (!(_handledTmpContent.TryGetValue(id, out last) &&
+                  string.Equals(last, curr, StringComparison.Ordinal) &&
+                  _handledTmpKeepOriginal.TryGetValue(id, out keep)))
             {
                 CacheOriginalFontIfNeeded(text);
-
-                var targetFont = ShouldKeepOriginalFont(text.text) ? GetOriginalFont(text) : _chineseFontAsset;
-                if (targetFont != null && text.font != targetFont)
-                {
-                    text.font = targetFont;
-                    text.havePropertiesChanged = true;
-                }
+                keep = ShouldKeepOriginalFont(curr);
+                _handledTmpContent[id] = curr;
+                _handledTmpKeepOriginal[id] = keep;
             }
-            finally
+
+            var targetFont = keep ? GetOriginalFont(text) : _chineseFontAsset;
+            if (targetFont != null && text.font != targetFont)
             {
-                _isHandlingTextChanged = false;
-            }
-        }
-
-        private void OnAnyTmpTextChanged(TMP_Text text)
-        {
-            OnAnyTmpTextChanged((UnityEngine.Object)text);
-        }
-
-        private IEnumerator PollTextLoop()
-        {
-            var wait = new WaitForSeconds(1f);
-
-            while (true)
-            {
-                try
-                {
-                    PollAndApplyTextOnce();
-                }
-                catch (Exception e)
-                {
-                    Logger.LogDebug("[FontReplace] PollTextLoop 异常: " + e);
-                }
-
-                yield return wait;
+                text.font = targetFont;
+                text.havePropertiesChanged = true;
             }
         }
 
-
-        private void PollAndApplyTextOnce()
+        private void ProcessUiText(Text text)
         {
-            if (_modEnabled != null && !_modEnabled.Value)
+            if (text == null)
             {
                 return;
             }
 
-            if (!_isChineseLocaleActive)
+            int id = text.GetInstanceID();
+            string curr = text.text ?? string.Empty;
+
+            bool keep;
+            string last;
+            if (!(_handledUiContent.TryGetValue(id, out last) &&
+                  string.Equals(last, curr, StringComparison.Ordinal) &&
+                  _handledUiKeepOriginal.TryGetValue(id, out keep)))
             {
-                return;
+                CacheOriginalFontIfNeeded(text);
+                keep = ShouldKeepOriginalFont(curr);
+                _handledUiContent[id] = curr;
+                _handledUiKeepOriginal[id] = keep;
             }
 
-            if (_chineseFontAsset == null)
+            var targetFont = keep ? GetOriginalFont(text) : _chineseUnityFont;
+            if (targetFont != null && text.font != targetFont)
             {
-                return;
-            }
-
-            if (_keepOriginalLatin == null || _keepOriginalDigits == null)
-            {
-                return;
-            }
-
-            if (!_keepOriginalLatin.Value && !_keepOriginalDigits.Value)
-            {
-                return;
-            }
-
-            // 避免极端情况下缓存无限增长
-            if (_lastTmpTextContent.Count > 8000)
-            {
-                _lastTmpTextContent.Clear();
-            }
-            if (_lastUnityTextContent.Count > 8000)
-            {
-                _lastUnityTextContent.Clear();
-            }
-
-            var tmpTexts = Resources.FindObjectsOfTypeAll<TMP_Text>();
-            if (tmpTexts != null)
-            {
-                for (int i = 0; i < tmpTexts.Length; i++)
-                {
-                    var t = tmpTexts[i];
-                    if (t == null)
-                    {
-                        continue;
-                    }
-
-                    int id = t.GetInstanceID();
-                    string curr = t.text ?? string.Empty;
-
-                    string last;
-                    if (!_lastTmpTextContent.TryGetValue(id, out last) || !string.Equals(last, curr, StringComparison.Ordinal))
-                    {
-                        _lastTmpTextContent[id] = curr;
-
-                        CacheOriginalFontIfNeeded(t);
-
-                        var targetFont = ShouldKeepOriginalFont(curr) ? GetOriginalFont(t) : _chineseFontAsset;
-                        if (targetFont != null && t.font != targetFont)
-                        {
-                            t.font = targetFont;
-                            t.havePropertiesChanged = true;
-                        }
-                    }
-                }
-            }
-
-            // UnityEngine.UI.Text：没有 onTextChanged 事件，所以只在轮询模式下顺便处理
-            var uiTexts = Resources.FindObjectsOfTypeAll<Text>();
-            if (uiTexts != null && _chineseUnityFont != null)
-            {
-                for (int i = 0; i < uiTexts.Length; i++)
-                {
-                    var t = uiTexts[i];
-                    if (t == null)
-                    {
-                        continue;
-                    }
-
-                    int id = t.GetInstanceID();
-                    string curr = t.text ?? string.Empty;
-
-                    string last;
-                    if (!_lastUnityTextContent.TryGetValue(id, out last) || !string.Equals(last, curr, StringComparison.Ordinal))
-                    {
-                        _lastUnityTextContent[id] = curr;
-
-                        CacheOriginalFontIfNeeded(t);
-
-                        var targetFont = ShouldKeepOriginalFont(curr) ? GetOriginalFont(t) : _chineseUnityFont;
-                        if (targetFont != null && t.font != targetFont)
-                        {
-                            t.font = targetFont;
-                        }
-                    }
-                }
+                text.font = targetFont;
             }
         }
 

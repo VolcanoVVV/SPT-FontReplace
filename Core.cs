@@ -1,5 +1,6 @@
 using BepInEx;
 using BepInEx.Configuration;
+using HarmonyLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -45,6 +46,7 @@ namespace FontReplace
 
         private ConfigEntry<bool> _modEnabled;
         private ConfigEntry<string> _fontBundleName;
+        private ConfigEntry<float> _fontScale;
         private ConfigEntry<bool> _keepOriginalLatin;
         private ConfigEntry<bool> _keepOriginalDigits;
 
@@ -52,19 +54,32 @@ namespace FontReplace
         private TMP_FontAsset _originalDefaultTmpFont;
         private readonly Dictionary<int, TMP_FontAsset> _originalTmpFonts = new Dictionary<int, TMP_FontAsset>();
         private readonly Dictionary<int, Font> _originalUnityFonts = new Dictionary<int, Font>();
-        private readonly Dictionary<int, string> _lastTmpTextContent = new Dictionary<int, string>();
-        private readonly Dictionary<int, string> _lastUnityTextContent = new Dictionary<int, string>();
 
-        private EventInfo _tmpOnTextChangedEvent;
-        private Delegate _tmpOnTextChangedHandler;
-        private bool _tmpTextChangedHooked;
+        private static FontReplacePlugin s_instance;
+
+        // ===== 文本变化监听（Harmony 补丁 + 帧末批量处理）=====
+        private Harmony _harmony;
+        private bool _textMonitorPatched;
+        private bool _flushScheduled;
+        private readonly HashSet<TMP_Text> _dirtyTmpTexts = new HashSet<TMP_Text>();
+        private readonly HashSet<Text> _dirtyUiTexts = new HashSet<Text>();
+        private readonly Dictionary<int, string> _handledTmpContent = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _handledUiContent = new Dictionary<int, string>();
+        private readonly Dictionary<int, bool> _handledTmpKeepOriginal = new Dictionary<int, bool>();
+        private readonly Dictionary<int, bool> _handledUiKeepOriginal = new Dictionary<int, bool>();
+        private static readonly WaitForEndOfFrame WaitEndOfFrame = new WaitForEndOfFrame();
+
+        // ===== 字体缩放（faceInfo.scale，游戏内可调）=====
+        private float _baseFaceInfoScale = 1f;
+        private bool _fontScaleApplyPending;
+
         private bool _isChineseLocaleActive;
-        private bool _isHandlingTextChanged;
-        private Coroutine _pollCoroutine;
 
         // 初始化配置
         private void Awake()
         {
+            s_instance = this;
+
             InitConfig();
 
             // 记录“游戏原版 TMP 默认字体”，用于之后恢复英文字母/数字显示

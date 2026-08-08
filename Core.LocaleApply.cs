@@ -63,12 +63,78 @@ namespace FontReplace
             _chineseFontAsset = asset;
             _chineseUnityFont = asset.sourceFontFile;
 
+            // 记录字体资产的原始渲染缩放，并按当前“字体缩放”配置应用
+            _baseFaceInfoScale = asset.faceInfo.scale;
+            ApplyFontScaleToAsset();
+
             Logger.LogInfo("[FontReplace] 已加载字体资源: " + asset.sourceFontFile + " (" + picked + ")");
             Logger.LogInfo("[FontReplace] 字体名=" + asset.name + ", 字体家族=" + asset.faceInfo.familyName + ", 样式=" + asset.faceInfo.styleName);
             Logger.LogInfo("[FontReplace] " + asset.atlasPopulationMode);
             Logger.LogInfo("[FontReplace] " + asset.atlasRenderMode);
 
             ab.Unload(false);
+        }
+
+        private void OnFontScaleSettingChanged(object sender, EventArgs e)
+        {
+            // 拖动滑块时会连续触发 SettingChanged，合并到帧末统一应用，避免每次变动都全量刷新
+            if (_fontScaleApplyPending)
+            {
+                return;
+            }
+
+            _fontScaleApplyPending = true;
+            StartCoroutine(ApplyFontScaleAtEndOfFrame());
+        }
+
+        private IEnumerator ApplyFontScaleAtEndOfFrame()
+        {
+            yield return WaitEndOfFrame;
+            _fontScaleApplyPending = false;
+
+            ApplyFontScaleToAsset();
+            RefreshChineseFontTexts();
+        }
+
+        private void ApplyFontScaleToAsset()
+        {
+            if (_chineseFontAsset == null)
+            {
+                return;
+            }
+
+            float factor = _fontScale != null ? _fontScale.Value : 1f;
+
+            // faceInfo.scale 是纯渲染乘数：实际字号 = fontSize / pointSize * scale，不影响图集与字形度量
+            var faceInfo = _chineseFontAsset.faceInfo;
+            faceInfo.scale = _baseFaceInfoScale * factor;
+            _chineseFontAsset.faceInfo = faceInfo;
+        }
+
+        private void RefreshChineseFontTexts()
+        {
+            if (_chineseFontAsset == null)
+            {
+                return;
+            }
+
+            var texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
+            if (texts == null)
+            {
+                return;
+            }
+
+            int refreshed = 0;
+            for (int i = 0; i < texts.Length; i++)
+            {
+                var text = texts[i];
+                if (text != null && text.font == _chineseFontAsset)
+                {
+                    text.havePropertiesChanged = true;
+                    refreshed++;
+                }
+            }
+
         }
 
         private void RegisterLocaleListener()
@@ -100,6 +166,12 @@ namespace FontReplace
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            // 场景切换后旧文本对象已销毁，清空判定缓存以限制内存增长
+            _handledTmpContent.Clear();
+            _handledUiContent.Clear();
+            _handledTmpKeepOriginal.Clear();
+            _handledUiKeepOriginal.Clear();
+
             var localeManager = LocaleManagerCompat.GetInstance(Logger);
             if (localeManager != null)
             {
