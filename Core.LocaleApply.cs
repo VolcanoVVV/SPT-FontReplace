@@ -373,6 +373,12 @@ namespace FontReplace
                         continue;
                     }
 
+                    // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
+                    if (IsInSubtitlePreview(text.transform))
+                    {
+                        continue;
+                    }
+
                     // 先记录一次“原版字体”（只记录非覆盖字体，避免把中文覆盖字体当成原版缓存）
                     CacheOriginalFontIfNeeded(text);
 
@@ -397,6 +403,12 @@ namespace FontReplace
                     {
                         var text = unityTexts[i];
                         if (text == null)
+                        {
+                            continue;
+                        }
+
+                        // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
+                        if (IsInSubtitlePreview(text.transform))
                         {
                             continue;
                         }

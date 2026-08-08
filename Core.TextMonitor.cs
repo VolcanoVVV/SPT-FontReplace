@@ -212,9 +212,37 @@ namespace FontReplace
             }
         }
 
+        // ===== 字幕模组预览面板豁免 =====
+
+        // 字幕模组（SPT-VolcanoSubtitle）的设置预览面板根节点固定命名为 SubtitlePreviewPane，
+        // 面板内文本的字体由字幕模组自行配置，命中该祖先节点则跳过字体替换
+        private const string SubtitlePreviewRootName = "SubtitlePreviewPane";
+
+        private static bool IsInSubtitlePreview(Transform transform)
+        {
+            var t = transform;
+            while (t != null)
+            {
+                if (string.Equals(t.name, SubtitlePreviewRootName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                t = t.parent;
+            }
+
+            return false;
+        }
+
         private void ProcessTmpText(TMP_Text text)
         {
             if (text == null)
+            {
+                return;
+            }
+
+            // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
+            if (IsInSubtitlePreview(text.transform))
             {
                 return;
             }
@@ -246,6 +274,12 @@ namespace FontReplace
         private void ProcessUiText(Text text)
         {
             if (text == null)
+            {
+                return;
+            }
+
+            // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
+            if (IsInSubtitlePreview(text.transform))
             {
                 return;
             }
