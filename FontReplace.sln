@@ -7,12 +7,30 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FontReplace", "FontReplace.
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug-3.11|Any CPU = Debug-3.11|Any CPU
+		Debug-4.0|Any CPU = Debug-4.0|Any CPU
+		Debug-4.1|Any CPU = Debug-4.1|Any CPU
 		Debug|Any CPU = Debug|Any CPU
+		Release-3.11|Any CPU = Release-3.11|Any CPU
+		Release-4.0|Any CPU = Release-4.0|Any CPU
+		Release-4.1|Any CPU = Release-4.1|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-3.11|Any CPU.ActiveCfg = Debug-3.11|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-3.11|Any CPU.Build.0 = Debug-3.11|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-4.0|Any CPU.ActiveCfg = Debug-4.0|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-4.0|Any CPU.Build.0 = Debug-4.0|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-4.1|Any CPU.ActiveCfg = Debug-4.1|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug-4.1|Any CPU.Build.0 = Debug-4.1|Any CPU
 		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-3.11|Any CPU.ActiveCfg = Release-3.11|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-3.11|Any CPU.Build.0 = Release-3.11|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-4.0|Any CPU.ActiveCfg = Release-4.0|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-4.0|Any CPU.Build.0 = Release-4.0|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-4.1|Any CPU.ActiveCfg = Release-4.1|Any CPU
+		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release-4.1|Any CPU.Build.0 = Release-4.1|Any CPU
 		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EAFFD607-EB56-4222-B97F-3FC9959DBC49}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection

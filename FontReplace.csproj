@@ -3,80 +3,107 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>enable</Nullable>
+    <Configurations>Debug;Release;Debug-4.1;Debug-4.0;Debug-3.11;Release-4.1;Release-4.0;Release-3.11</Configurations>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug-4.1' Or '$(Configuration)' == 'Release-4.1'">
+    <GameVersionPath>V:\EFToffline\EFToffline - 4.1debug</GameVersionPath>
+    <DefineConstants>$(DefineConstants);GAME_4_1</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug-4.0' Or '$(Configuration)' == 'Release-4.0'">
+    <GameVersionPath>V:\EFToffline\EFToffline - 4.0debug</GameVersionPath>
+    <DefineConstants>$(DefineConstants);GAME_4_0</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug-3.11' Or '$(Configuration)' == 'Release-3.11'">
+    <GameVersionPath>V:\EFToffline\EFToffline - 3.11.0debug</GameVersionPath>
+    <DefineConstants>$(DefineConstants);GAME_3_11</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GameVersionPath)' != ''">
+    <GamePluginPath>$(GameVersionPath)\BepInEx\plugins\FontReplace</GamePluginPath>
+    <PackagePluginPath>V:\EFToffline\汉化\FontReplace 中文字体切换【开发】\打包\BepInEx\plugins\FontReplace</PackagePluginPath>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="0Harmony">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\BepInEx\core\0Harmony.dll</HintPath>
+      <HintPath>$(GameVersionPath)\BepInEx\core\0Harmony.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="BepInEx">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\BepInEx\core\BepInEx.dll</HintPath>
+      <HintPath>$(GameVersionPath)\BepInEx\core\BepInEx.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Comfort">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Comfort.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Comfort.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Newtonsoft.Json.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Sirenix.Serialization">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Sirenix.Serialization.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Sirenix.Serialization.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Unity.TextMeshPro.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.AssetBundleModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.AssetBundleModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\..\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.TextCoreFontEngineModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.TextCoreTextEngineModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.TextCoreTextEngineModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TextCoreTextEngineModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.TLSModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.TLSModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TLSModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.UIModule">
-      <HintPath>V:\EFToffline\EFToffline - 4.1debug\EscapeFromTarkov_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.UIModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="CopyBuildOutput" AfterTargets="Build" Condition="'$(GameVersionPath)' != ''">
+    <MakeDir Directories="$(GamePluginPath);$(PackagePluginPath)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GamePluginPath)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackagePluginPath)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

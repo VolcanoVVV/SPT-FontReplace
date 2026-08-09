@@ -14,7 +14,11 @@ using static EFT.ScenesPreset;
 using System.Runtime.CompilerServices;
 using Diz.Binding;
 using EFT;
+#if GAME_4_1
+using LocalizationManager = EFT.LocalizationManager;
+#else
 using LocalizationManager = LocaleManagerClass;
+#endif
 
 namespace FontReplace
 {
