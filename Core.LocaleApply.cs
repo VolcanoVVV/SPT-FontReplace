@@ -14,7 +14,7 @@ using static EFT.ScenesPreset;
 using System.Runtime.CompilerServices;
 using Diz.Binding;
 using EFT;
-using EFT.Prestige;
+using LocalizationManager = LocaleManagerClass;
 
 namespace FontReplace
 {
