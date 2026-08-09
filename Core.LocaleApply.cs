@@ -374,7 +374,7 @@ namespace FontReplace
                     }
 
                     // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
-                    if (IsInSubtitlePreview(text.transform))
+                    if (IsInSubtitleFontScope(text.transform))
                     {
                         continue;
                     }
@@ -408,7 +408,7 @@ namespace FontReplace
                         }
 
                         // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
-                        if (IsInSubtitlePreview(text.transform))
+                        if (IsInSubtitleFontScope(text.transform))
                         {
                             continue;
                         }

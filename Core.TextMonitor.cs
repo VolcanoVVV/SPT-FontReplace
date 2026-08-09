@@ -212,18 +212,22 @@ namespace FontReplace
             }
         }
 
-        // ===== 字幕模组预览面板豁免 =====
+        // ===== 字幕模组字体作用域豁免 =====
 
-        // 字幕模组（SPT-VolcanoSubtitle）的设置预览面板根节点固定命名为 SubtitlePreviewPane，
-        // 面板内文本的字体由字幕模组自行配置，命中该祖先节点则跳过字体替换
+        // 字幕模组的预览、屏幕字幕/弹幕和世界气泡均自行管理字体。
+        // FontReplace 不再覆盖这些节点，避免大量台词与游戏/F12 共用同一旧 UGUI 字体图集。
         private const string SubtitlePreviewRootName = "SubtitlePreviewPane";
+        private const string SubtitleRuntimeRootName = "SubtitleRoot";
+        private const string SubtitleWorld3DRootName = "World3DBubble";
 
-        private static bool IsInSubtitlePreview(Transform transform)
+        private static bool IsInSubtitleFontScope(Transform transform)
         {
             var t = transform;
             while (t != null)
             {
-                if (string.Equals(t.name, SubtitlePreviewRootName, StringComparison.Ordinal))
+                if (string.Equals(t.name, SubtitlePreviewRootName, StringComparison.Ordinal) ||
+                    string.Equals(t.name, SubtitleRuntimeRootName, StringComparison.Ordinal) ||
+                    string.Equals(t.name, SubtitleWorld3DRootName, StringComparison.Ordinal))
                 {
                     return true;
                 }
@@ -242,7 +246,7 @@ namespace FontReplace
             }
 
             // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
-            if (IsInSubtitlePreview(text.transform))
+            if (IsInSubtitleFontScope(text.transform))
             {
                 return;
             }
@@ -279,7 +283,7 @@ namespace FontReplace
             }
 
             // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
-            if (IsInSubtitlePreview(text.transform))
+            if (IsInSubtitleFontScope(text.transform))
             {
                 return;
             }
