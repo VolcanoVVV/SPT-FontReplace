@@ -1,19 +1,12 @@
-using BepInEx;
-using BepInEx.Configuration;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using static EFT.ScenesPreset;
-using System.Runtime.CompilerServices;
-using Diz.Binding;
-using EFT;
 #if GAME_4_1
 using LocalizationManager = EFT.LocalizationManager;
 #else
@@ -22,66 +15,106 @@ using LocalizationManager = LocaleManagerClass;
 
 namespace FontReplace
 {
-    public partial class FontReplacePlugin : BaseUnityPlugin
+    public partial class FontReplacePlugin
     {
-        private void LoadFontAsset(string bundleName)
+        private bool TryLoadFontAsset(string bundleName, bool forceReload, out LoadedFont loaded)
         {
-            var picked = string.IsNullOrEmpty(bundleName) ? DefaultBundleName : bundleName;
-            if (string.IsNullOrEmpty(picked))
+            loaded = null!;
+            var picked = bundleName?.Trim() ?? string.Empty;
+            if (picked.Length == 0)
             {
-                Logger.LogWarning("[FontReplace] 未选择任何字体资源，跳过加载");
-                return;
+                return false;
             }
 
-            var fontDir = Path.Combine(pluginDir, FontDirName);
-            var bundlePath = Path.Combine(fontDir, picked);
-            AssetBundle ab = AssetBundle.LoadFromFile(bundlePath);
-            if (ab == null)
+            if (!string.Equals(Path.GetFileName(picked), picked, StringComparison.Ordinal) ||
+                picked.IndexOfAny(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }) >= 0)
             {
-                Logger.LogError("[FontReplace] 加载 AssetBundle 失败: " + bundlePath);
-                return;
+                Logger.LogError("[FontReplace] 拒绝不安全的字体包路径: " + picked);
+                return false;
             }
 
-            var fontAssetName = Path.GetFileNameWithoutExtension(picked);
-            TMP_FontAsset asset = ab.LoadAsset<TMP_FontAsset>(fontAssetName);
-            if (asset == null)
+            if (!forceReload && _loadedFonts.TryGetValue(picked, out loaded))
             {
-                var assets = ab.LoadAllAssets<TMP_FontAsset>();
-                if (assets == null || assets.Length == 0)
+                return loaded.TmpFont != null;
+            }
+
+            AssetBundle? bundle = null;
+            try
+            {
+                var fontDir = Path.GetFullPath(Path.Combine(pluginDir, FontDirName));
+                var bundlePath = Path.GetFullPath(Path.Combine(fontDir, picked));
+                var expectedPrefix = fontDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (!bundlePath.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase) || !File.Exists(bundlePath))
                 {
-                    Logger.LogError("[FontReplace] AssetBundle 中未找到任何 TMP_FontAsset");
-                    ab.Unload(false);
-                    return;
+                    Logger.LogError("[FontReplace] 字体包不存在或路径不合法: " + bundlePath);
+                    return false;
                 }
 
-                asset = assets[0];
-            }
+                bundle = AssetBundle.LoadFromFile(bundlePath);
+                if (bundle == null)
+                {
+                    Logger.LogError("[FontReplace] 加载 AssetBundle 失败: " + bundlePath);
+                    return false;
+                }
 
-            if (asset == null)
+                string expectedAssetName = Path.GetFileNameWithoutExtension(picked);
+                var asset = bundle.LoadAsset<TMP_FontAsset>(expectedAssetName);
+                if (asset == null)
+                {
+                    var assets = bundle.LoadAllAssets<TMP_FontAsset>();
+                    if (assets == null || assets.Length == 0)
+                    {
+                        Logger.LogError("[FontReplace] AssetBundle 中未找到 TMP_FontAsset: " + picked);
+                        return false;
+                    }
+
+                    asset = assets[0];
+                }
+
+                loaded = new LoadedFont
+                {
+                    TmpFont = asset,
+                    UnityFont = asset.sourceFontFile,
+                    BaseScale = asset.faceInfo.scale
+                };
+
+                _loadedFonts[picked] = loaded;
+                _replacementTmpFontIds.Add(asset.GetInstanceID());
+                if (loaded.UnityFont != null)
+                {
+                    _replacementUnityFontIds.Add(loaded.UnityFont.GetInstanceID());
+                }
+
+                Logger.LogInfo(
+                    "[FontReplace] 已加载字体资源: bundle=" + picked +
+                    ", asset=" + asset.name +
+                    ", family=" + asset.faceInfo.familyName +
+                    ", style=" + asset.faceInfo.styleName +
+                    ", atlas=" + asset.atlasPopulationMode);
+
+                if (loaded.UnityFont == null)
+                {
+                    Logger.LogWarning("[FontReplace] 字体包没有 sourceFontFile；TMP 可用，但旧版 Unity UI.Text 无法使用该字体。");
+                }
+
+                return true;
+            }
+            catch (Exception e)
             {
-                Logger.LogError("[FontReplace] AssetBundle 中未找到任何 TMP_FontAsset");
-                ab.Unload(false);
-                return;
+                Logger.LogError("[FontReplace] 加载字体包异常 (" + picked + "): " + e);
+                return false;
             }
-
-            _chineseFontAsset = asset;
-            _chineseUnityFont = asset.sourceFontFile;
-
-            // 记录字体资产的原始渲染缩放，并按当前“字体缩放”配置应用
-            _baseFaceInfoScale = asset.faceInfo.scale;
-            ApplyFontScaleToAsset();
-
-            Logger.LogInfo("[FontReplace] 已加载字体资源: " + asset.sourceFontFile + " (" + picked + ")");
-            Logger.LogInfo("[FontReplace] 字体名=" + asset.name + ", 字体家族=" + asset.faceInfo.familyName + ", 样式=" + asset.faceInfo.styleName);
-            Logger.LogInfo("[FontReplace] " + asset.atlasPopulationMode);
-            Logger.LogInfo("[FontReplace] " + asset.atlasRenderMode);
-
-            ab.Unload(false);
+            finally
+            {
+                if (bundle != null)
+                {
+                    bundle.Unload(false);
+                }
+            }
         }
 
-        private void OnFontScaleSettingChanged(object sender, EventArgs e)
+        private void QueueFontScaleApply()
         {
-            // 拖动滑块时会连续触发 SettingChanged，合并到帧末统一应用，避免每次变动都全量刷新
             if (_fontScaleApplyPending)
             {
                 return;
@@ -97,48 +130,39 @@ namespace FontReplace
             _fontScaleApplyPending = false;
 
             ApplyFontScaleToAsset();
-            RefreshChineseFontTexts();
+            RefreshReplacementFontTexts();
         }
 
         private void ApplyFontScaleToAsset()
         {
-            if (_chineseFontAsset == null)
+            if (_replacementFontAsset == null ||
+                !_fontProfiles.TryGetValue(_activeLocaleKey, out var profile) ||
+                !_loadedFonts.TryGetValue(_activeBundleName, out var loaded))
             {
                 return;
             }
 
-            float factor = _fontScale != null ? _fontScale.Value : 1f;
-
-            // faceInfo.scale 是纯渲染乘数：实际字号 = fontSize / pointSize * scale，不影响图集与字形度量
-            var faceInfo = _chineseFontAsset.faceInfo;
-            faceInfo.scale = _baseFaceInfoScale * factor;
-            _chineseFontAsset.faceInfo = faceInfo;
+            var faceInfo = _replacementFontAsset.faceInfo;
+            faceInfo.scale = loaded.BaseScale * profile.Scale.Value;
+            _replacementFontAsset.faceInfo = faceInfo;
         }
 
-        private void RefreshChineseFontTexts()
+        private void RefreshReplacementFontTexts()
         {
-            if (_chineseFontAsset == null)
+            if (_replacementFontAsset == null)
             {
                 return;
             }
 
             var texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
-            if (texts == null)
-            {
-                return;
-            }
-
-            int refreshed = 0;
             for (int i = 0; i < texts.Length; i++)
             {
                 var text = texts[i];
-                if (text != null && text.font == _chineseFontAsset)
+                if (text != null && text.font == _replacementFontAsset)
                 {
                     text.havePropertiesChanged = true;
-                    refreshed++;
                 }
             }
-
         }
 
         private void RegisterLocaleListener()
@@ -146,20 +170,17 @@ namespace FontReplace
             var localeManager = LocaleManagerCompat.GetInstance(Logger);
             if (localeManager == null)
             {
-                Logger.LogWarning("[FontReplace] 未找到 LocaleManager；仅在场景加载时生效。");
+                Logger.LogWarning("[FontReplace] LocaleManager 尚未就绪；将在场景加载时重试。");
+                _currentLocaleRaw = LocaleFromSystemLanguage(Application.systemLanguage);
+                _currentLocaleKey = NormalizeLocaleKey(_currentLocaleRaw);
+                ApplyConfigUiLocalization(_currentLocaleKey);
                 return;
             }
 
-            _unsubscribeLocaleUpdate = LocaleManagerCompat.TrySubscribeLocaleUpdate(localeManager, OnLocaleUpdated, Logger);
-            _hasLocaleListener = _unsubscribeLocaleUpdate != null;
-
-            if (!_hasLocaleListener)
-            {
-                _unsubscribeLocaleUpdate = delegate { };
-            }
-
-            ConfigureFallbacks(localeManager);
-            TryApplyChineseFont(localeManager, "initial");
+            var unsubscribe = LocaleManagerCompat.TrySubscribeLocaleUpdate(localeManager, OnLocaleUpdated, Logger);
+            _hasLocaleListener = unsubscribe != null;
+            _unsubscribeLocaleUpdate = unsubscribe ?? delegate { };
+            ApplyConfiguredFont(localeManager, LocaleManagerCompat.GetCurrentLanguage(localeManager), "initial", false);
         }
 
         private void RegisterSceneListener()
@@ -170,20 +191,23 @@ namespace FontReplace
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            // 场景切换后旧文本对象已销毁，清空判定缓存以限制内存增长
-            _handledTmpContent.Clear();
-            _handledUiContent.Clear();
-            _handledTmpKeepOriginal.Clear();
-            _handledUiKeepOriginal.Clear();
+            ClearHandledTextCaches();
+            PruneOriginalFontCaches();
 
             var localeManager = LocaleManagerCompat.GetInstance(Logger);
             if (localeManager != null)
             {
-                TryApplyChineseFont(localeManager, "sceneLoaded");
+                if (!_hasLocaleListener)
+                {
+                    var unsubscribe = LocaleManagerCompat.TrySubscribeLocaleUpdate(localeManager, OnLocaleUpdated, Logger);
+                    _hasLocaleListener = unsubscribe != null;
+                    _unsubscribeLocaleUpdate = unsubscribe ?? delegate { };
+                }
+
+                ApplyConfiguredFont(localeManager, LocaleManagerCompat.GetCurrentLanguage(localeManager), "sceneLoaded", false);
             }
-            else
+            else if (_isLocaleFontActive)
             {
-                // 没有 LocaleManager 的情况下，仍然尝试刷新 TMP 默认字体
                 ApplyDefaultFontAndRefresh("sceneLoaded(noLocaleManager)");
             }
         }
@@ -191,74 +215,107 @@ namespace FontReplace
         private void OnLocaleUpdated()
         {
             var localeManager = LocaleManagerCompat.GetInstance(Logger);
-            if (localeManager == null)
+            if (localeManager != null)
             {
+                ApplyConfiguredFont(localeManager, LocaleManagerCompat.GetCurrentLanguage(localeManager), "localeUpdated", false);
+            }
+        }
+
+        private void ApplyConfiguredFontForCurrentLocale(string reason, bool forceReload)
+        {
+            var localeManager = LocaleManagerCompat.GetInstance(Logger);
+            string rawLocale = localeManager != null
+                ? LocaleManagerCompat.GetCurrentLanguage(localeManager)
+                : _currentLocaleRaw;
+
+            if (string.IsNullOrWhiteSpace(rawLocale))
+            {
+                Logger.LogWarning("[FontReplace] 无法确定当前游戏语言，暂不应用字体。");
                 return;
             }
 
-            ConfigureFallbacks(localeManager);
-            TryApplyChineseFont(localeManager, "update");
+            ApplyConfiguredFont(localeManager, rawLocale, reason, forceReload);
         }
 
-        private void TryApplyChineseFont(LocalizationManager localeManager, string reason)
+        private void ApplyConfiguredFont(LocalizationManager? localeManager, string rawLocale, string reason, bool forceReload)
         {
-            if (_modEnabled != null && !_modEnabled.Value)
+            string normalizedLocale = NormalizeLocaleKey(rawLocale);
+            _currentLocaleRaw = rawLocale;
+            _currentLocaleKey = normalizedLocale;
+            ApplyConfigUiLocalization(normalizedLocale);
+
+            if (!_modEnabled.Value)
             {
-                _isChineseLocaleActive = false;
-                Logger.LogInfo("[FontReplace] 模组已禁用，跳过字体覆盖 (" + reason + ")");
+                DeactivateFontOverride(localeManager, reason + "(disabled)");
                 return;
             }
 
             if (_isApplying)
             {
-                Logger.LogInfo("[FontReplace] 跳过应用（重新申请）: " + reason);
+                Logger.LogDebug("[FontReplace] 跳过重复字体应用: " + reason);
                 return;
             }
 
-            if (_chineseFontAsset == null)
+            if (!_fontProfiles.TryGetValue(normalizedLocale, out var profile) ||
+                string.IsNullOrWhiteSpace(profile.Bundle.Value))
             {
-                Logger.LogWarning("[FontReplace] 字体资源尚未加载成功 (" + reason + ").");
+                DeactivateFontOverride(localeManager, reason + "(noProfile)");
                 return;
             }
 
-            var currentLang = LocaleManagerCompat.GetCurrentLanguage(localeManager);
-            var appliedLang = LocaleManagerCompat.GetAppliedLanguage(localeManager);
-            Logger.LogInfo("[FontReplace] 当前语言=" + currentLang + ", 生效语言=" + appliedLang + " (" + reason + ")");
-
-            if (!string.Equals(currentLang, ChineseLocaleKey, StringComparison.OrdinalIgnoreCase))
+            if (!TryLoadFontAsset(profile.Bundle.Value, forceReload, out var loaded))
             {
-                // 不是中文语言时不做字体覆盖
-                _isChineseLocaleActive = false;
-                Logger.LogInfo("[FontReplace] 当前语言不是中文，已关闭字体覆盖（保持原版字体）。");
+                Logger.LogWarning("[FontReplace] 当前语言字体包加载失败，保留上一次有效状态: locale=" + rawLocale);
+                if (!string.Equals(_activeLocaleKey, normalizedLocale, StringComparison.OrdinalIgnoreCase))
+                {
+                    DeactivateFontOverride(localeManager, reason + "(loadFailed)");
+                }
                 return;
             }
-
-            // 中文语言：启用字体覆盖逻辑
-            _isChineseLocaleActive = true;
 
             _isApplying = true;
             try
             {
-                // 1) 尝试把 ch 对应的字体写回 LocaleManager 的字体映射（旧/新版本字段名可能不同）
-                LocaleManagerCompat.TrySetLocaleFont(localeManager, ChineseLocaleKey, _chineseFontAsset, Logger);
+                CacheOriginalDefaultFonts();
 
-                // 2) 尝试同步 "已应用语言"，避免 UpdateApplicationLanguage 逻辑被短路
-                LocaleManagerCompat.TrySetAppliedLanguage(localeManager, currentLang, Logger);
-
-                // 3) 让 LocaleManager 按当前 locale 重新构建 fallback（如果该版本支持）
-                LocaleManagerCompat.TryApplyLocaleInternal(localeManager, currentLang, Logger);
-
-                // 4) 兜底：把 TMP 默认字体替换 + 扫一遍现有 Text
-                ApplyDefaultFontAndRefresh(reason);
-
-                // 5) 初次应用时，尽量触发一次 Locale 更新事件（如果该版本存在 BindableEvent）
-                if (string.Equals(reason, "initial", StringComparison.OrdinalIgnoreCase))
+                if (localeManager != null &&
+                    _isLocaleFontActive &&
+                    !string.Equals(_activeLocaleRaw, rawLocale, StringComparison.OrdinalIgnoreCase))
                 {
-                    LocaleManagerCompat.TryInvokeLocaleUpdated(localeManager, Logger);
+                    RestoreLocaleFontMapping(localeManager, _activeLocaleRaw);
                 }
 
-                Logger.LogInfo("[FontReplace] 中文字体覆盖已应用完成。");
-                LogSampleTextFonts(reason);
+                _replacementFontAsset = loaded.TmpFont;
+                _replacementUnityFont = loaded.UnityFont;
+                _activeLocaleKey = normalizedLocale;
+                _activeLocaleRaw = rawLocale;
+                _activeBundleName = profile.Bundle.Value;
+                _isLocaleFontActive = true;
+
+                if (localeManager != null)
+                {
+                    CaptureOriginalLocaleFont(localeManager, rawLocale);
+                    ConfigureFallbacks(localeManager, rawLocale, loaded.TmpFont);
+                    LocaleManagerCompat.TrySetLocaleFont(localeManager, rawLocale, loaded.TmpFont, Logger);
+                    LocaleManagerCompat.TryApplyLocaleInternal(localeManager, rawLocale, Logger);
+                }
+
+                ApplyFontScaleToAsset();
+                ClearHandledTextCaches();
+                ApplyDefaultFontAndRefresh(reason);
+                Logger.LogInfo("[FontReplace] 已应用语言字体: locale=" + rawLocale + ", bundle=" + profile.Bundle.Value);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError("[FontReplace] 应用语言字体失败: locale=" + rawLocale + ", error=" + e);
+                try
+                {
+                    DeactivateFontOverride(localeManager, reason + "(exception)");
+                }
+                catch (Exception restoreError)
+                {
+                    Logger.LogError("[FontReplace] 应用失败后的字体恢复也失败: " + restoreError);
+                }
             }
             finally
             {
@@ -266,207 +323,218 @@ namespace FontReplace
             }
         }
 
-        private void ConfigureFallbacks(LocalizationManager localeManager)
+        private void CaptureOriginalLocaleFont(LocalizationManager localeManager, string rawLocale)
         {
-            if (_chineseFontAsset == null)
+            if (_originalLocaleFonts.ContainsKey(rawLocale) || _localeFontKeysOriginallyMissing.Contains(rawLocale))
             {
                 return;
             }
 
-            if (_chineseFontAsset.fallbackFontAssetTable == null)
+            var original = LocaleManagerCompat.TryGetLocaleFont(localeManager, rawLocale);
+            if (original != null && !_replacementTmpFontIds.Contains(original.GetInstanceID()))
             {
-                _chineseFontAsset.fallbackFontAssetTable = new List<TMP_FontAsset>();
+                _originalLocaleFonts[rawLocale] = original;
+            }
+            else
+            {
+                _localeFontKeysOriginallyMissing.Add(rawLocale);
+            }
+        }
+
+        private void RestoreLocaleFontMapping(LocalizationManager localeManager, string rawLocale)
+        {
+            if (string.IsNullOrWhiteSpace(rawLocale))
+            {
+                return;
+            }
+
+            if (_originalLocaleFonts.TryGetValue(rawLocale, out var original))
+            {
+                LocaleManagerCompat.TrySetLocaleFont(localeManager, rawLocale, original, Logger);
+            }
+            else if (_localeFontKeysOriginallyMissing.Contains(rawLocale))
+            {
+                LocaleManagerCompat.TryRemoveLocaleFont(localeManager, rawLocale, Logger);
+            }
+        }
+
+        private void DeactivateFontOverride(LocalizationManager? localeManager, string reason)
+        {
+            if (!_isLocaleFontActive)
+            {
+                return;
+            }
+
+            string previousLocale = _activeLocaleRaw;
+            if (localeManager != null)
+            {
+                RestoreLocaleFontMapping(localeManager, previousLocale);
+            }
+
+            RestoreOriginalFonts();
+            _isLocaleFontActive = false;
+            _activeLocaleKey = string.Empty;
+            _activeLocaleRaw = string.Empty;
+            _activeBundleName = string.Empty;
+            ClearHandledTextCaches();
+
+            if (localeManager != null)
+            {
+                string currentLocale = LocaleManagerCompat.GetCurrentLanguage(localeManager);
+                LocaleManagerCompat.TryApplyLocaleInternal(localeManager, currentLocale, Logger);
+            }
+
+            Logger.LogInfo("[FontReplace] 已恢复游戏原版字体 (" + reason + ")");
+        }
+
+        private void ConfigureFallbacks(LocalizationManager localeManager, string rawLocale, TMP_FontAsset fontAsset)
+        {
+            if (fontAsset.fallbackFontAssetTable == null)
+            {
+                fontAsset.fallbackFontAssetTable = new List<TMP_FontAsset>();
             }
 
             var existing = new HashSet<int>();
-            foreach (var fb in _chineseFontAsset.fallbackFontAssetTable)
+            foreach (var fallback in fontAsset.fallbackFontAssetTable)
             {
-                if (fb != null)
+                if (fallback != null)
                 {
-                    existing.Add(fb.GetInstanceID());
+                    existing.Add(fallback.GetInstanceID());
                 }
             }
 
-            int added = 0;
+            AddFallback(_originalLocaleFonts.TryGetValue(rawLocale, out var original) ? original : null);
+            AddFallback(LocaleManagerCompat.TryGetLocaleFont(localeManager, EnglishLocaleKey));
+            AddFallback(LocaleManagerCompat.TryGetLocaleFont(localeManager, RussianLocaleKey));
 
-            // 优先把 en/ru 的主字体加入 fallback（如果能从 LocaleManager 里读到的话）
-            var en = LocaleManagerCompat.TryGetLocaleFont(localeManager, "en");
-            if (en != null && en != _chineseFontAsset && existing.Add(en.GetInstanceID()))
+            void AddFallback(TMP_FontAsset? fallback)
             {
-                _chineseFontAsset.fallbackFontAssetTable.Add(en);
-                added++;
-            }
-
-            var ru = LocaleManagerCompat.TryGetLocaleFont(localeManager, "ru");
-            if (ru != null && ru != _chineseFontAsset && existing.Add(ru.GetInstanceID()))
-            {
-                _chineseFontAsset.fallbackFontAssetTable.Add(ru);
-                added++;
-            }
-
-            // 再把 UI/Fonts 目录里所有 TMP_FontAsset 加入 fallback
-            var uiFonts = Resources.LoadAll<TMP_FontAsset>("UI/Fonts");
-            if (uiFonts != null)
-            {
-                for (int i = 0; i < uiFonts.Length; i++)
+                if (fallback != null && fallback != fontAsset && existing.Add(fallback.GetInstanceID()))
                 {
-                    var font = uiFonts[i];
-                    if (font == null || font == _chineseFontAsset)
-                    {
-                        continue;
-                    }
-
-                    if (existing.Add(font.GetInstanceID()))
-                    {
-                        _chineseFontAsset.fallbackFontAssetTable.Add(font);
-                        added++;
-                    }
+                    fontAsset.fallbackFontAssetTable.Add(fallback);
                 }
-            }
-
-            if (added > 0)
-            {
-                Logger.LogInfo("[FontReplace] 返回字体添加: " + added);
             }
         }
 
         private void ApplyDefaultFontAndRefresh(string reason)
         {
-            if (_modEnabled != null && !_modEnabled.Value)
+            if (!_modEnabled.Value || !_isLocaleFontActive || _replacementFontAsset == null)
             {
                 return;
             }
 
-            if (_chineseFontAsset == null)
-            {
-                return;
-            }
+            CacheOriginalDefaultFonts();
 
-            // 只要执行到这里，说明我们正在进行“中文字体覆盖”逻辑
-            _isChineseLocaleActive = true;
-
-            // 替换 TMP 默认字体（部分版本字段名不同，所以用反射）
             var settings = TMP_Settings.instance;
             if (settings != null)
             {
                 var field = typeof(TMP_Settings).GetField("m_defaultFontAsset", BindingFlags.Instance | BindingFlags.NonPublic);
                 if (field != null)
                 {
-                    field.SetValue(settings, _chineseFontAsset);
+                    field.SetValue(settings, _replacementFontAsset);
                 }
                 else
                 {
-                    Logger.LogWarning("[FontReplace] TMP_Settings 中未找到 m_defaultFontAsset 字段，无法替换默认字体");
+                    var property = typeof(TMP_Settings).GetProperty("defaultFontAsset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (property != null && property.CanWrite)
+                    {
+                        property.SetValue(settings, _replacementFontAsset, null);
+                    }
                 }
-            }
-            else
-            {
-                Logger.LogWarning("[FontReplace] TMP_Settings 实例为空，无法替换默认字体");
             }
 
             int updated = 0;
-
-            var texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
-            if (texts != null)
+            var tmpTexts = Resources.FindObjectsOfTypeAll<TMP_Text>();
+            for (int i = 0; i < tmpTexts.Length; i++)
             {
-                for (int i = 0; i < texts.Length; i++)
+                var text = tmpTexts[i];
+                if (text == null || IsExcludedFontScope(text.transform))
                 {
-                    var text = texts[i];
-                    if (text == null)
+                    continue;
+                }
+
+                CacheOriginalFontIfNeeded(text);
+                var target = ShouldKeepOriginalFont(text.text) ? GetOriginalFont(text) : _replacementFontAsset;
+                if (target != null && text.font != target)
+                {
+                    text.font = target;
+                    text.havePropertiesChanged = true;
+                    updated++;
+                }
+            }
+
+            var uiTexts = Resources.FindObjectsOfTypeAll<Text>();
+            if (_replacementUnityFont != null)
+            {
+                for (int i = 0; i < uiTexts.Length; i++)
+                {
+                    var text = uiTexts[i];
+                    if (text == null || IsExcludedFontScope(text.transform))
                     {
                         continue;
                     }
 
-                    // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
-                    if (IsInSubtitleFontScope(text.transform))
-                    {
-                        continue;
-                    }
-
-                    // 先记录一次“原版字体”（只记录非覆盖字体，避免把中文覆盖字体当成原版缓存）
                     CacheOriginalFontIfNeeded(text);
-
-                    // 根据内容决定是否保留原版字体（仅 ASCII 文本：英文字母/数字）
-                    var targetFont = ShouldKeepOriginalFont(text.text) ? GetOriginalFont(text) : _chineseFontAsset;
-
-                    if (targetFont != null && text.font != targetFont)
+                    var target = ShouldKeepOriginalFont(text.text) ? GetOriginalFont(text) : _replacementUnityFont;
+                    if (target != null && text.font != target)
                     {
-                        text.font = targetFont;
-                        text.havePropertiesChanged = true;
+                        text.font = target;
                         updated++;
                     }
                 }
             }
 
-            var unityTexts = Resources.FindObjectsOfTypeAll<Text>();
-            if (unityTexts != null)
-            {
-                if (_chineseUnityFont != null)
-                {
-                    for (int i = 0; i < unityTexts.Length; i++)
-                    {
-                        var text = unityTexts[i];
-                        if (text == null)
-                        {
-                            continue;
-                        }
-
-                        // 字幕模组设置预览面板（SubtitlePreviewPane）内的文本由字幕模组自行配置字体，跳过替换
-                        if (IsInSubtitleFontScope(text.transform))
-                        {
-                            continue;
-                        }
-
-                        CacheOriginalFontIfNeeded(text);
-
-                        var targetFont = ShouldKeepOriginalFont(text.text) ? GetOriginalFont(text) : _chineseUnityFont;
-                        if (targetFont != null && text.font != targetFont)
-                        {
-                            text.font = targetFont;
-                            updated++;
-                        }
-                    }
-                }
-                else
-                {
-                    Logger.LogWarning("[FontReplace] sourceFontFile 失效 UnityEngine.UI.Text");
-                }
-            }
-
-            Logger.LogInfo("[FontReplace] 已刷新文本组件数量： " + updated + " (" + reason + ")");
+            Logger.LogInfo("[FontReplace] 已刷新文本组件数量=" + updated + " (" + reason + ")");
         }
 
-        private void LogSampleTextFonts(string reason)
+        private void ClearHandledTextCaches()
         {
-            var texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
-            if (texts == null || texts.Length == 0)
-            {
-                Logger.LogInfo("[FontReplace] 未找到任何 TMP_Text（原因：" + reason + ").");
-                return;
-            }
-
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            int logged = 0;
-            for (int i = 0; i < texts.Length; i++)
-            {
-                var text = texts[i];
-                if (text == null || text.font == null)
-                {
-                    continue;
-                }
-
-                var key = text.font.name;
-                if (seen.Add(key))
-                {
-                    Logger.LogInfo("[FontReplace] 示例 TMP_Text 使用字体：" + text.font.name + " (示例, " + reason + ")");
-                    logged++;
-                    if (logged >= 5)
-                    {
-                        break;
-                    }
-                }
-            }
+            _handledTmpContent.Clear();
+            _handledUiContent.Clear();
+            _handledTmpKeepOriginal.Clear();
+            _handledUiKeepOriginal.Clear();
         }
 
+        private static string NormalizeLocaleKey(string? locale)
+        {
+            string value = (locale ?? string.Empty).Trim().Replace('_', '-').ToLowerInvariant();
+            if (value == "ch" || value == "cn" || value.StartsWith("zh", StringComparison.Ordinal))
+            {
+                return ChineseLocaleKey;
+            }
+            if (value == "en" || value.StartsWith("en-", StringComparison.Ordinal))
+            {
+                return EnglishLocaleKey;
+            }
+            if (value == "ru" || value.StartsWith("ru-", StringComparison.Ordinal))
+            {
+                return RussianLocaleKey;
+            }
+            if (value == "jp" || value == "ja" || value.StartsWith("ja-", StringComparison.Ordinal))
+            {
+                return JapaneseLocaleKey;
+            }
+            if (value == "kr" || value == "ko" || value.StartsWith("ko-", StringComparison.Ordinal))
+            {
+                return KoreanLocaleKey;
+            }
+
+            int separator = value.IndexOf('-');
+            return separator > 0 ? value.Substring(0, separator) : value;
+        }
+
+        private static string LocaleFromSystemLanguage(SystemLanguage language)
+        {
+            return language switch
+            {
+                SystemLanguage.Chinese => ChineseLocaleKey,
+                SystemLanguage.ChineseSimplified => ChineseLocaleKey,
+                SystemLanguage.ChineseTraditional => ChineseLocaleKey,
+                SystemLanguage.Russian => RussianLocaleKey,
+                SystemLanguage.Japanese => JapaneseLocaleKey,
+                SystemLanguage.Korean => KoreanLocaleKey,
+                _ => EnglishLocaleKey
+            };
+        }
     }
 }

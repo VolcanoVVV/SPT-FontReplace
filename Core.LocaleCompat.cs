@@ -1,19 +1,8 @@
-using BepInEx;
-using BepInEx.Configuration;
+using BepInEx.Logging;
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Reflection;
 using TMPro;
-using UnityEngine;
-using UnityEngine.SceneManagement;
-using UnityEngine.UI;
-using static EFT.ScenesPreset;
-using System.Runtime.CompilerServices;
-using Diz.Binding;
-using EFT;
 #if GAME_4_1
 using LocalizationManager = EFT.LocalizationManager;
 #else
@@ -22,524 +11,276 @@ using LocalizationManager = LocaleManagerClass;
 
 namespace FontReplace
 {
-    public partial class FontReplacePlugin : BaseUnityPlugin
+    public partial class FontReplacePlugin
     {
         private static class LocaleManagerCompat
         {
             private static readonly BindingFlags AnyInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             private static readonly BindingFlags AnyStatic = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
-            private static PropertyInfo s_singletonProp;
-            private static FieldInfo s_singletonField;
+            private static PropertyInfo? s_singletonProperty;
+            private static FieldInfo? s_singletonField;
+            private static MemberInfo? s_currentLanguageMember;
+            private static MemberInfo? s_fontMapMember;
 
-            private static MemberInfo s_currentLangMember;
-            private static MemberInfo s_appliedLangMember;
-
-            private static MemberInfo s_fontMapMember;
-            private static MemberInfo s_bindableEventMember;
-
-            public static LocalizationManager GetInstance(BepInEx.Logging.ManualLogSource logger)
+            public static LocalizationManager? GetInstance(ManualLogSource logger)
             {
                 try
                 {
-                    var t = typeof(LocalizationManager);
-
-                    // 1) 优先按常见名字取单例
-                    if (s_singletonProp == null)
+                    var type = typeof(LocalizationManager);
+                    if (s_singletonProperty == null)
                     {
-                        s_singletonProp = t.GetProperty("LocalizationManager", AnyStatic);
-                        if (s_singletonProp == null || s_singletonProp.PropertyType != t)
+                        foreach (var name in new[] { "Instance", "LocalizationManager", "LocaleManagerClass" })
                         {
-                            // 2) 兜底：找到任意一个返回 LocalizationManager 的静态属性
-                            var props = t.GetProperties(AnyStatic);
-                            for (int i = 0; i < props.Length; i++)
+                            var property = type.GetProperty(name, AnyStatic);
+                            if (property != null && property.PropertyType == type && property.GetIndexParameters().Length == 0)
                             {
-                                var p = props[i];
-                                if (p.PropertyType == t && p.GetIndexParameters().Length == 0)
+                                s_singletonProperty = property;
+                                break;
+                            }
+                        }
+
+                        if (s_singletonProperty == null)
+                        {
+                            foreach (var property in type.GetProperties(AnyStatic))
+                            {
+                                if (property.PropertyType == type && property.GetIndexParameters().Length == 0)
                                 {
-                                    s_singletonProp = p;
+                                    s_singletonProperty = property;
                                     break;
                                 }
                             }
                         }
                     }
 
-                    if (s_singletonProp != null)
+                    if (s_singletonProperty?.GetValue(null, null) is LocalizationManager propertyValue)
                     {
-                        var v = s_singletonProp.GetValue(null, null) as LocalizationManager;
-                        if (v != null)
-                        {
-                            return v;
-                        }
+                        return propertyValue;
                     }
 
-                    // 3) 再兜底：静态字段
                     if (s_singletonField == null)
                     {
-                        var fields = t.GetFields(AnyStatic);
-                        for (int i = 0; i < fields.Length; i++)
+                        foreach (var field in type.GetFields(AnyStatic))
                         {
-                            var f = fields[i];
-                            if (f.FieldType == t)
+                            if (field.FieldType == type)
                             {
-                                s_singletonField = f;
+                                s_singletonField = field;
                                 break;
                             }
                         }
                     }
 
-                    if (s_singletonField != null)
-                    {
-                        return s_singletonField.GetValue(null) as LocalizationManager;
-                    }
+                    return s_singletonField?.GetValue(null) as LocalizationManager;
                 }
                 catch (Exception e)
                 {
-                    if (logger != null)
-                    {
-                        logger.LogWarning("[FontReplace] GetInstance(LocaleManager) 失效: " + e);
-                    }
-                }
-
-                return null;
-            }
-
-            public static string GetCurrentLanguage(LocalizationManager lm)
-            {
-                // 源码属性 String_0 (默认 en)
-                string v;
-                if (TryGetString(lm, ref s_currentLangMember, new[] { "String_0", "CurrentLanguage", "Language", "Locale" }, out v))
-                {
-                    return v;
-                }
-                return "en";
-            }
-
-            public static string GetAppliedLanguage(LocalizationManager lm)
-            {
-                // 源码字段 String_1
-                string v;
-                if (TryGetString(lm, ref s_appliedLangMember, new[] { "String_1", "AppliedLanguage", "CurrentAppliedLanguage" }, out v))
-                {
-                    return v;
-                }
-                return string.Empty;
-            }
-
-            public static void TrySetAppliedLanguage(LocalizationManager lm, string lang, BepInEx.Logging.ManualLogSource logger)
-            {
-                if (!TrySetString(lm, ref s_appliedLangMember, new[] { "String_1", "AppliedLanguage", "CurrentAppliedLanguage" }, lang))
-                {
-                    // 没有也不算致命
-                    if (logger != null)
-                    {
-                        logger.LogDebug("[FontReplace] 未找到 AppliedLanguage 成员；跳过应用。");
-                    }
-                }
-            }
-
-            public static TMP_FontAsset TryGetLocaleFont(LocalizationManager lm, string locale)
-            {
-                var map = GetLocaleFontMap(lm);
-                if (map == null)
-                {
+                    logger.LogWarning("[FontReplace] 获取 LocaleManager 实例失败: " + e);
                     return null;
                 }
-
-                TMP_FontAsset font;
-                if (map.TryGetValue(locale, out font))
-                {
-                    return font;
-                }
-
-                return null;
             }
 
-            public static void TrySetLocaleFont(LocalizationManager lm, string locale, TMP_FontAsset font, BepInEx.Logging.ManualLogSource logger)
+            public static string GetCurrentLanguage(LocalizationManager localeManager)
             {
-                var map = GetLocaleFontMap(lm);
+                if (TryGetNamedString(
+                    localeManager,
+                    ref s_currentLanguageMember,
+                    new[] { "Culture", "String_0", "CurrentLanguage", "Language", "Locale", "_culture", "string_2" },
+                    out var value) && !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+
+                return EnglishLocaleKey;
+            }
+
+            public static TMP_FontAsset? TryGetLocaleFont(LocalizationManager localeManager, string locale)
+            {
+                var map = GetLocaleFontMap(localeManager);
+                return map != null && map.TryGetValue(locale, out var font) ? font : null;
+            }
+
+            public static void TrySetLocaleFont(
+                LocalizationManager localeManager,
+                string locale,
+                TMP_FontAsset font,
+                ManualLogSource logger)
+            {
+                var map = GetLocaleFontMap(localeManager);
                 if (map == null)
                 {
-                    if (logger != null)
-                    {
-                        logger.LogWarning("[FontReplace] 未找到本地化字体映射；仅回退到 TMP_Settings。");
-                    }
+                    logger.LogWarning("[FontReplace] 未找到本地化字体映射；仅应用 TMP/UGUI 文本覆盖。");
                     return;
                 }
 
                 map[locale] = font;
-
-                // 打印一下确认
-                if (logger != null)
-                {
-                    logger.LogInfo("[FontReplace] 设置本地化字体： " + locale + " -> " + (font != null ? font.name : "(null)"));
-                }
             }
 
-            public static void TryApplyLocaleInternal(LocalizationManager lm, string locale, BepInEx.Logging.ManualLogSource logger)
+            public static void TryRemoveLocaleFont(LocalizationManager localeManager, string locale, ManualLogSource logger)
+            {
+                var map = GetLocaleFontMap(localeManager);
+                if (map == null)
+                {
+                    logger.LogDebug("[FontReplace] 无法移除本地化字体映射: " + locale);
+                    return;
+                }
+
+                map.Remove(locale);
+            }
+
+            public static void TryApplyLocaleInternal(LocalizationManager localeManager, string locale, ManualLogSource logger)
             {
                 try
                 {
-                    // 你提供的源码里是 public void method_1(string localeType)
-                    var m = lm.GetType().GetMethod("method_1", AnyInstance, null, new[] { typeof(string) }, null);
-                    if (m != null)
+                    var type = localeManager.GetType();
+
+                    // 4.1 的明确入口。必须优先于 UpdateApplicationLanguage，后者会在语言未变化时提前返回。
+                    var updateFonts = type.GetMethod("UpdateFonts", AnyInstance, null, new[] { typeof(string) }, null);
+                    if (updateFonts != null)
                     {
-                        m.Invoke(lm, new object[] { locale });
+                        updateFonts.Invoke(localeManager, new object[] { locale });
                         return;
                     }
 
-                    // 兜底：有些版本叫 UpdateApplicationLanguage
-                    var m2 = lm.GetType().GetMethod("UpdateApplicationLanguage", AnyInstance, null, Type.EmptyTypes, null);
-                    if (m2 != null)
+                    // 3.11/4.0 的明确入口。
+                    var legacyUpdateFonts = type.GetMethod("method_1", AnyInstance, null, new[] { typeof(string) }, null);
+                    if (legacyUpdateFonts != null)
                     {
-                        m2.Invoke(lm, null);
-                    }
-                }
-                catch (Exception e)
-                {
-                    if (logger != null)
-                    {
-                        logger.LogWarning("[FontReplace] TryApplyLocaleInternal 失败: " + e);
-                    }
-                }
-            }
-
-            public static void TryInvokeLocaleUpdated(LocalizationManager lm, BepInEx.Logging.ManualLogSource logger)
-            {
-                try
-                {
-                    var evt = GetBindableEvent(lm);
-                    if (evt == null)
-                    {
+                        legacyUpdateFonts.Invoke(localeManager, new object[] { locale });
                         return;
                     }
 
-                    // BindableEvent.Invoke()
-                    var invoke = evt.GetType().GetMethod("Invoke", AnyInstance, null, Type.EmptyTypes, null);
-                    if (invoke != null)
+                    var updateLanguage = type.GetMethod("UpdateApplicationLanguage", AnyInstance, null, Type.EmptyTypes, null);
+                    if (updateLanguage != null)
                     {
-                        invoke.Invoke(evt, null);
+                        updateLanguage.Invoke(localeManager, null);
+                        return;
                     }
+
+                    logger.LogWarning("[FontReplace] 当前游戏版本没有可识别的字体 fallback 更新入口。");
                 }
                 catch (Exception e)
                 {
-                    if (logger != null)
-                    {
-                        logger.LogDebug("[FontReplace] TryInvokeLocaleUpdated 失败: " + e);
-                    }
+                    logger.LogWarning("[FontReplace] 更新本地化字体 fallback 失败: " + e);
                 }
             }
 
-            public static Action TrySubscribeLocaleUpdate(LocalizationManager lm, Action callback, BepInEx.Logging.ManualLogSource logger)
+            public static Action? TrySubscribeLocaleUpdate(
+                LocalizationManager localeManager,
+                Action callback,
+                ManualLogSource logger)
             {
                 try
                 {
-                    // 你提供的源码里：public Action AddLocaleUpdateListener(Action callback)
-                    var m = lm.GetType().GetMethod("AddLocaleUpdateListener", AnyInstance, null, new[] { typeof(Action) }, null);
-                    if (m != null)
-                    {
-                        var ret = m.Invoke(lm, new object[] { callback }) as Action;
-                        if (ret != null)
-                        {
-                            return ret;
-                        }
-                    }
+                    var method = localeManager.GetType().GetMethod(
+                        "AddLocaleUpdateListener",
+                        AnyInstance,
+                        null,
+                        new[] { typeof(Action) },
+                        null);
+                    return method?.Invoke(localeManager, new object[] { callback }) as Action;
                 }
                 catch (Exception e)
                 {
-                    if (logger != null)
-                    {
-                        logger.LogWarning("[FontReplace] TrySubscribeLocaleUpdate 失败: " + e);
-                    }
-                }
-
-                return null;
-            }
-
-            private static IDictionary<string, TMP_FontAsset> GetLocaleFontMap(LocalizationManager lm)
-            {
-                if (lm == null)
-                {
+                    logger.LogWarning("[FontReplace] 订阅语言更新事件失败: " + e);
                     return null;
                 }
+            }
 
-                // 你提供的源码里是 public Dictionary<string, TMP_FontAsset> Dictionary_1
+            private static IDictionary<string, TMP_FontAsset>? GetLocaleFontMap(LocalizationManager localeManager)
+            {
                 if (s_fontMapMember == null)
                 {
-                    var t = lm.GetType();
-
-                    // 1) 常见名字
-                    var fNamed = t.GetField("Dictionary_1", AnyInstance);
-                    if (fNamed != null && typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(fNamed.FieldType))
+                    var type = localeManager.GetType();
+                    foreach (var name in new[] { "_languageSpecificFallBacks", "Dictionary_1", "dictionary_1" })
                     {
-                        s_fontMapMember = fNamed;
-                    }
-
-                    if (s_fontMapMember == null)
-                    {
-                        var pNamed = t.GetProperty("Dictionary_1", AnyInstance);
-                        if (pNamed != null && typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(pNamed.PropertyType) && pNamed.GetIndexParameters().Length == 0)
+                        var field = type.GetField(name, AnyInstance);
+                        if (field != null && typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(field.FieldType))
                         {
-                            s_fontMapMember = pNamed;
+                            s_fontMapMember = field;
+                            break;
                         }
-                    }
 
-                    // 2) 兜底：按类型找 Dictionary<string, TMP_FontAsset>
-                    if (s_fontMapMember == null)
-                    {
-                        var fields = t.GetFields(AnyInstance);
-                        for (int i = 0; i < fields.Length; i++)
+                        var property = type.GetProperty(name, AnyInstance);
+                        if (property != null && property.CanRead && property.GetIndexParameters().Length == 0 &&
+                            typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(property.PropertyType))
                         {
-                            var f = fields[i];
-                            if (typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(f.FieldType))
-                            {
-                                s_fontMapMember = f;
-                                break;
-                            }
+                            s_fontMapMember = property;
+                            break;
                         }
                     }
 
                     if (s_fontMapMember == null)
                     {
-                        var props = t.GetProperties(AnyInstance);
-                        for (int i = 0; i < props.Length; i++)
+                        foreach (var field in type.GetFields(AnyInstance))
                         {
-                            var p = props[i];
-                            if (p.GetIndexParameters().Length != 0 || !p.CanRead)
+                            if (typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(field.FieldType))
                             {
-                                continue;
-                            }
-
-                            if (typeof(IDictionary<string, TMP_FontAsset>).IsAssignableFrom(p.PropertyType))
-                            {
-                                s_fontMapMember = p;
+                                s_fontMapMember = field;
                                 break;
                             }
                         }
                     }
                 }
 
-                if (s_fontMapMember is FieldInfo)
+                if (s_fontMapMember is FieldInfo fieldInfo)
                 {
-                    var fi = (FieldInfo)s_fontMapMember;
-                    return fi.GetValue(lm) as IDictionary<string, TMP_FontAsset>;
+                    return fieldInfo.GetValue(localeManager) as IDictionary<string, TMP_FontAsset>;
                 }
 
-                if (s_fontMapMember is PropertyInfo)
+                if (s_fontMapMember is PropertyInfo propertyInfo)
                 {
-                    var pi = (PropertyInfo)s_fontMapMember;
-                    return pi.GetValue(lm, null) as IDictionary<string, TMP_FontAsset>;
+                    return propertyInfo.GetValue(localeManager, null) as IDictionary<string, TMP_FontAsset>;
                 }
 
                 return null;
             }
 
-            private static object GetBindableEvent(LocalizationManager lm)
+            private static bool TryGetNamedString(
+                object instance,
+                ref MemberInfo? cachedMember,
+                string[] names,
+                out string value)
             {
-                if (lm == null)
-                {
-                    return null;
-                }
-
-                // 你提供的源码里是 public BindableEvent BindableEvent_0
-                if (s_bindableEventMember == null)
-                {
-                    var t = lm.GetType();
-
-                    // 1) 常见名字
-                    var fNamed = t.GetField("BindableEvent_0", AnyInstance);
-                    if (fNamed != null)
-                    {
-                        s_bindableEventMember = fNamed;
-                    }
-
-                    if (s_bindableEventMember == null)
-                    {
-                        var pNamed = t.GetProperty("BindableEvent_0", AnyInstance);
-                        if (pNamed != null && pNamed.GetIndexParameters().Length == 0)
-                        {
-                            s_bindableEventMember = pNamed;
-                        }
-                    }
-
-                    // 2) 兜底：按类型名包含 BindableEvent 的字段/属性
-                    if (s_bindableEventMember == null)
-                    {
-                        var fields = t.GetFields(AnyInstance);
-                        for (int i = 0; i < fields.Length; i++)
-                        {
-                            var f = fields[i];
-                            if (f.FieldType != null && f.FieldType.Name.IndexOf("BindableEvent", StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                s_bindableEventMember = f;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (s_bindableEventMember == null)
-                    {
-                        var props = t.GetProperties(AnyInstance);
-                        for (int i = 0; i < props.Length; i++)
-                        {
-                            var p = props[i];
-                            if (p.GetIndexParameters().Length != 0 || !p.CanRead)
-                            {
-                                continue;
-                            }
-
-                            if (p.PropertyType != null && p.PropertyType.Name.IndexOf("BindableEvent", StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                s_bindableEventMember = p;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (s_bindableEventMember is FieldInfo)
-                {
-                    return ((FieldInfo)s_bindableEventMember).GetValue(lm);
-                }
-
-                if (s_bindableEventMember is PropertyInfo)
-                {
-                    return ((PropertyInfo)s_bindableEventMember).GetValue(lm, null);
-                }
-
-                return null;
-            }
-
-            private static bool TryGetString(object obj, ref MemberInfo cachedMember, string[] names, out string value)
-            {
-                value = null;
-                if (obj == null)
-                {
-                    return false;
-                }
-
+                value = string.Empty;
                 try
                 {
-                    var t = obj.GetType();
-
+                    var type = instance.GetType();
                     if (cachedMember == null)
                     {
                         for (int i = 0; i < names.Length; i++)
                         {
-                            var n = names[i];
-                            var p = t.GetProperty(n, AnyInstance);
-                            if (p != null && p.PropertyType == typeof(string) && p.GetIndexParameters().Length == 0 && p.CanRead)
+                            var property = type.GetProperty(names[i], AnyInstance);
+                            if (property != null && property.PropertyType == typeof(string) &&
+                                property.CanRead && property.GetIndexParameters().Length == 0)
                             {
-                                cachedMember = p;
+                                cachedMember = property;
                                 break;
                             }
 
-                            var f = t.GetField(n, AnyInstance);
-                            if (f != null && f.FieldType == typeof(string))
+                            var field = type.GetField(names[i], AnyInstance);
+                            if (field != null && field.FieldType == typeof(string))
                             {
-                                cachedMember = f;
+                                cachedMember = field;
                                 break;
-                            }
-                        }
-
-                        // 兜底：找第一个 string 的属性/字段（风险较大，所以仅作为最后手段）
-                        if (cachedMember == null)
-                        {
-                            var props = t.GetProperties(AnyInstance);
-                            for (int i = 0; i < props.Length; i++)
-                            {
-                                var p = props[i];
-                                if (p.PropertyType == typeof(string) && p.GetIndexParameters().Length == 0 && p.CanRead)
-                                {
-                                    cachedMember = p;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (cachedMember == null)
-                        {
-                            var fields = t.GetFields(AnyInstance);
-                            for (int i = 0; i < fields.Length; i++)
-                            {
-                                var f = fields[i];
-                                if (f.FieldType == typeof(string))
-                                {
-                                    cachedMember = f;
-                                    break;
-                                }
                             }
                         }
                     }
 
-                    if (cachedMember is PropertyInfo)
+                    if (cachedMember is PropertyInfo propertyInfo)
                     {
-                        value = (string)((PropertyInfo)cachedMember).GetValue(obj, null);
+                        value = propertyInfo.GetValue(instance, null) as string ?? string.Empty;
                         return true;
                     }
 
-                    if (cachedMember is FieldInfo)
+                    if (cachedMember is FieldInfo fieldInfo)
                     {
-                        value = (string)((FieldInfo)cachedMember).GetValue(obj);
+                        value = fieldInfo.GetValue(instance) as string ?? string.Empty;
                         return true;
                     }
                 }
                 catch
                 {
-                    // 忽略
-                }
-
-                return false;
-            }
-
-            private static bool TrySetString(object obj, ref MemberInfo cachedMember, string[] names, string value)
-            {
-                if (obj == null)
-                {
-                    return false;
-                }
-
-                try
-                {
-                    var t = obj.GetType();
-
-                    if (cachedMember == null)
-                    {
-                        for (int i = 0; i < names.Length; i++)
-                        {
-                            var n = names[i];
-
-                            var p = t.GetProperty(n, AnyInstance);
-                            if (p != null && p.PropertyType == typeof(string) && p.GetIndexParameters().Length == 0 && p.CanWrite)
-                            {
-                                cachedMember = p;
-                                break;
-                            }
-
-                            var f = t.GetField(n, AnyInstance);
-                            if (f != null && f.FieldType == typeof(string) && !f.IsInitOnly)
-                            {
-                                cachedMember = f;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (cachedMember is PropertyInfo)
-                    {
-                        ((PropertyInfo)cachedMember).SetValue(obj, value, null);
-                        return true;
-                    }
-
-                    if (cachedMember is FieldInfo)
-                    {
-                        ((FieldInfo)cachedMember).SetValue(obj, value);
-                        return true;
-                    }
-                }
-                catch
-                {
-                    // 忽略
+                    // 调用方会使用英文作为安全回退。
                 }
 
                 return false;

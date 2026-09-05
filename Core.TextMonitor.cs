@@ -1,17 +1,14 @@
-using BepInEx;
-using BepInEx.Configuration;
 using HarmonyLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using TMPro;
-using UnityEngine;
 using UnityEngine.UI;
 
 namespace FontReplace
 {
-    public partial class FontReplacePlugin : BaseUnityPlugin
+    public partial class FontReplacePlugin
     {
         private void SetupTextMonitoring()
         {
@@ -24,7 +21,7 @@ namespace FontReplace
             {
                 if (_harmony == null)
                 {
-                    _harmony = new Harmony("hiddenhiragi.Volcano.fontreplace");
+                    _harmony = new Harmony(PluginGuid);
                 }
 
                 var tmpPostfix = new HarmonyMethod(AccessTools.Method(typeof(FontReplacePlugin), nameof(OnTmpTextDirty)));
@@ -47,27 +44,36 @@ namespace FontReplace
 
                 if (_textMonitorPatched)
                 {
-                    Logger.LogInfo("[FontReplace] 已通过 Harmony 监听文本变化（用于英文字母/数字保留原版），共 patch " + patched.Count + " 个方法。");
+                    Logger.LogInfo("[FontReplace] 已通过 Harmony 监听动态文本，共 patch " + patched.Count + " 个方法。");
                 }
                 else
                 {
-                    Logger.LogWarning("[FontReplace] 未能 patch 任何文本方法，英文字母/数字保留原版将不会自动生效。");
+                    Logger.LogWarning("[FontReplace] 未能 patch 任何文本方法，运行时新建文本可能无法自动替换字体。");
                 }
             }
             catch (Exception e)
             {
                 Logger.LogWarning("[FontReplace] Harmony 监听文本变化失败: " + e);
+                try
+                {
+                    _harmony?.UnpatchSelf();
+                }
+                catch
+                {
+                    // 保留原始异常日志。
+                }
+                _textMonitorPatched = false;
             }
         }
 
-        private void PatchOnce(MethodInfo target, HarmonyMethod postfix, HashSet<MethodInfo> patched)
+        private void PatchOnce(MethodInfo? target, HarmonyMethod postfix, HashSet<MethodInfo> patched)
         {
             if (target == null || postfix == null || patched.Contains(target))
             {
                 return;
             }
 
-            _harmony.Patch(target, postfix: postfix);
+            _harmony!.Patch(target, postfix: postfix);
             patched.Add(target);
         }
 
@@ -91,10 +97,8 @@ namespace FontReplace
 
             _dirtyTmpTexts.Clear();
             _dirtyUiTexts.Clear();
-            _handledTmpContent.Clear();
-            _handledUiContent.Clear();
-            _handledTmpKeepOriginal.Clear();
-            _handledUiKeepOriginal.Clear();
+            ClearHandledTextCaches();
+            _flushScheduled = false;
         }
 
         // ===== Harmony postfix（必须为静态方法，通过 s_instance 转回插件实例）=====
@@ -121,22 +125,12 @@ namespace FontReplace
 
         private bool ShouldMonitorTexts()
         {
-            if (_modEnabled != null && !_modEnabled.Value)
+            if (!_modEnabled.Value)
             {
                 return false;
             }
 
-            if (!_isChineseLocaleActive || _chineseFontAsset == null)
-            {
-                return false;
-            }
-
-            if (_keepOriginalLatin == null || _keepOriginalDigits == null)
-            {
-                return false;
-            }
-
-            return _keepOriginalLatin.Value || _keepOriginalDigits.Value;
+            return _isLocaleFontActive && _replacementFontAsset != null;
         }
 
         private void MarkTmpTextDirty(TMP_Text text)
@@ -212,32 +206,6 @@ namespace FontReplace
             }
         }
 
-        // ===== 字幕模组字体作用域豁免 =====
-
-        // 字幕模组的预览、屏幕字幕/弹幕和世界气泡均自行管理字体。
-        // FontReplace 不再覆盖这些节点，避免大量台词与游戏/F12 共用同一旧 UGUI 字体图集。
-        private const string SubtitlePreviewRootName = "SubtitlePreviewPane";
-        private const string SubtitleRuntimeRootName = "SubtitleRoot";
-        private const string SubtitleWorld3DRootName = "World3DBubble";
-
-        private static bool IsInSubtitleFontScope(Transform transform)
-        {
-            var t = transform;
-            while (t != null)
-            {
-                if (string.Equals(t.name, SubtitlePreviewRootName, StringComparison.Ordinal) ||
-                    string.Equals(t.name, SubtitleRuntimeRootName, StringComparison.Ordinal) ||
-                    string.Equals(t.name, SubtitleWorld3DRootName, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-
-                t = t.parent;
-            }
-
-            return false;
-        }
-
         private void ProcessTmpText(TMP_Text text)
         {
             if (text == null)
@@ -245,9 +213,9 @@ namespace FontReplace
                 return;
             }
 
-            // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
-            if (IsInSubtitleFontScope(text.transform))
+            if (IsExcludedFontScope(text.transform))
             {
+                RestoreOriginalFontIfTracked(text);
                 return;
             }
 
@@ -267,7 +235,7 @@ namespace FontReplace
                 _handledTmpKeepOriginal[id] = keep;
             }
 
-            var targetFont = keep ? GetOriginalFont(text) : _chineseFontAsset;
+            var targetFont = keep ? GetOriginalFont(text) : _replacementFontAsset;
             if (targetFont != null && text.font != targetFont)
             {
                 text.font = targetFont;
@@ -282,9 +250,9 @@ namespace FontReplace
                 return;
             }
 
-            // 字幕预览面板内的文本不替换字体（也不写入判定缓存，保证每次处理都跳过）
-            if (IsInSubtitleFontScope(text.transform))
+            if (IsExcludedFontScope(text.transform))
             {
+                RestoreOriginalFontIfTracked(text);
                 return;
             }
 
@@ -303,7 +271,7 @@ namespace FontReplace
                 _handledUiKeepOriginal[id] = keep;
             }
 
-            var targetFont = keep ? GetOriginalFont(text) : _chineseUnityFont;
+            var targetFont = keep ? GetOriginalFont(text) : _replacementUnityFont;
             if (targetFont != null && text.font != targetFont)
             {
                 text.font = targetFont;

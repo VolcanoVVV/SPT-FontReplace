@@ -3,27 +3,31 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>enable</Nullable>
+    <Version>1.3.0</Version>
+    <AssemblyVersion>1.3.0.0</AssemblyVersion>
+    <FileVersion>1.3.0.0</FileVersion>
+    <DeployOnBuild Condition="'$(DeployOnBuild)' == ''">false</DeployOnBuild>
     <Configurations>Debug;Release;Debug-4.1;Debug-4.0;Debug-3.11;Release-4.1;Release-4.0;Release-3.11</Configurations>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug-4.1' Or '$(Configuration)' == 'Release-4.1'">
-    <GameVersionPath>V:\EFToffline\EFToffline - 4.1debug</GameVersionPath>
+    <GameVersionPath Condition="'$(GameVersionPath)' == '' And Exists('V:\EFToffline\EFToffline - 4.1debug')">V:\EFToffline\EFToffline - 4.1debug</GameVersionPath>
     <DefineConstants>$(DefineConstants);GAME_4_1</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug-4.0' Or '$(Configuration)' == 'Release-4.0'">
-    <GameVersionPath>V:\EFToffline\EFToffline - 4.0debug</GameVersionPath>
+    <GameVersionPath Condition="'$(GameVersionPath)' == '' And Exists('V:\EFToffline\EFToffline - 4.0debug')">V:\EFToffline\EFToffline - 4.0debug</GameVersionPath>
     <DefineConstants>$(DefineConstants);GAME_4_0</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug-3.11' Or '$(Configuration)' == 'Release-3.11'">
-    <GameVersionPath>V:\EFToffline\EFToffline - 3.11.0debug</GameVersionPath>
+    <GameVersionPath Condition="'$(GameVersionPath)' == '' And Exists('V:\EFToffline\EFToffline - 3.11.0debug')">V:\EFToffline\EFToffline - 3.11.0debug</GameVersionPath>
     <DefineConstants>$(DefineConstants);GAME_3_11</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(GameVersionPath)' != ''">
     <GamePluginPath>$(GameVersionPath)\BepInEx\plugins\FontReplace</GamePluginPath>
-    <PackagePluginPath>V:\EFToffline\汉化\FontReplace 中文字体切换【开发】\打包\BepInEx\plugins\FontReplace</PackagePluginPath>
+    <PackagePluginPath Condition="'$(PackagePluginPath)' == '' And Exists('V:\EFToffline\汉化\FontReplace 中文字体切换【开发】\打包')">V:\EFToffline\汉化\FontReplace 中文字体切换【开发】\打包\BepInEx\plugins\FontReplace</PackagePluginPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,24 +39,8 @@
       <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="Assembly-CSharp-firstpass">
-      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     <Reference Include="BepInEx">
       <HintPath>$(GameVersionPath)\BepInEx\core\BepInEx.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Comfort">
-      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Comfort.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Newtonsoft.Json">
-      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Newtonsoft.Json.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Sirenix.Serialization">
-      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\Sirenix.Serialization.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
@@ -86,10 +74,6 @@
       <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="UnityEngine.TLSModule">
-      <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.TLSModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>$(GameVersionPath)\EscapeFromTarkov_Data\Managed\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
@@ -100,9 +84,17 @@
     </Reference>
   </ItemGroup>
 
-  <Target Name="CopyBuildOutput" AfterTargets="Build" Condition="'$(GameVersionPath)' != ''">
-    <MakeDir Directories="$(GamePluginPath);$(PackagePluginPath)" />
+  <Target Name="ValidateGameVersionPath" BeforeTargets="ResolveReferences" Condition="'$(GameVersionPath)' == ''">
+    <Error Text="GameVersionPath is not configured. Pass -p:GameVersionPath=&quot;path to the target EFT/SPT installation&quot;." />
+  </Target>
+
+  <Target Name="CopyBuildOutputToGame" AfterTargets="Build" Condition="'$(DeployOnBuild)' == 'true' And '$(GamePluginPath)' != ''">
+    <MakeDir Directories="$(GamePluginPath)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GamePluginPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyBuildOutputToPackage" AfterTargets="Build" Condition="'$(DeployOnBuild)' == 'true' And '$(PackagePluginPath)' != ''">
+    <MakeDir Directories="$(PackagePluginPath)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackagePluginPath)" SkipUnchangedFiles="true" />
   </Target>
 

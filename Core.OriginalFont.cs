@@ -1,20 +1,13 @@
-using BepInEx;
-using BepInEx.Configuration;
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using static EFT.ScenesPreset;
 
 namespace FontReplace
 {
-    public partial class FontReplacePlugin : BaseUnityPlugin
+    public partial class FontReplacePlugin
     {
         private void CacheOriginalDefaultFonts()
         {
@@ -31,90 +24,61 @@ namespace FontReplace
                     return;
                 }
 
+                TMP_FontAsset? current = null;
                 var field = typeof(TMP_Settings).GetField("m_defaultFontAsset", BindingFlags.Instance | BindingFlags.NonPublic);
                 if (field != null)
                 {
-                    _originalDefaultTmpFont = field.GetValue(settings) as TMP_FontAsset;
+                    current = field.GetValue(settings) as TMP_FontAsset;
                 }
                 else
                 {
-                    var prop = typeof(TMP_Settings).GetProperty("defaultFontAsset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (prop != null && prop.PropertyType == typeof(TMP_FontAsset) && prop.CanRead)
+                    var property = typeof(TMP_Settings).GetProperty("defaultFontAsset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (property != null && property.CanRead)
                     {
-                        _originalDefaultTmpFont = prop.GetValue(settings, null) as TMP_FontAsset;
+                        current = property.GetValue(settings, null) as TMP_FontAsset;
                     }
+                }
+
+                if (current != null && !_replacementTmpFontIds.Contains(current.GetInstanceID()))
+                {
+                    _originalDefaultTmpFont = current;
                 }
             }
             catch (Exception e)
             {
-                Logger.LogDebug("[FontReplace] CacheOriginalDefaultFonts 失败: " + e);
+                Logger.LogDebug("[FontReplace] 缓存 TMP 默认字体失败: " + e);
             }
         }
 
         private void OnKeepOriginalSettingChanged(object sender, EventArgs e)
         {
-            if (_modEnabled != null && !_modEnabled.Value)
+            if (!_modEnabled.Value || !_isLocaleFontActive || _replacementFontAsset == null)
             {
                 return;
             }
 
-            if (_chineseFontAsset == null)
-            {
-                return;
-            }
-
-            // 判定结果依赖于这两个开关的取值，开关变化后缓存的判定已失效，先清空再全量刷新
-            _handledTmpContent.Clear();
-            _handledUiContent.Clear();
-            _handledTmpKeepOriginal.Clear();
-            _handledUiKeepOriginal.Clear();
-
-            // 只有在“中文字体覆盖”处于启用状态时才刷新，避免在非中文语言下误改字体
-            if (_isChineseLocaleActive)
-            {
-                ApplyDefaultFontAndRefresh("configChanged");
-            }
+            ClearHandledTextCaches();
+            ApplyDefaultFontAndRefresh("characterPolicyChanged");
         }
-
 
         private void OnModEnabledSettingChanged(object sender, EventArgs e)
         {
-            if (_modEnabled == null)
-            {
-                return;
-            }
-
             if (_modEnabled.Value)
             {
-                Logger.LogInfo("[FontReplace] 模组已启用，开始尝试应用字体覆盖。");
-
-                var localeManager = LocaleManagerCompat.GetInstance(Logger);
-                if (localeManager != null)
-                {
-                    ConfigureFallbacks(localeManager);
-                    TryApplyChineseFont(localeManager, "modEnabled");
-                }
-                else
-                {
-                    ApplyDefaultFontAndRefresh("modEnabled(noLocaleManager)");
-                }
-
+                Logger.LogInfo("[FontReplace] 模组已启用。");
                 SetupTextMonitoring();
+                ApplyConfiguredFontForCurrentLocale("modEnabled", false);
             }
             else
             {
-                Logger.LogInfo("[FontReplace] 模组已禁用，恢复原版字体。");
-                RestoreOriginalFonts();
+                Logger.LogInfo("[FontReplace] 模组已禁用，开始恢复原版字体。");
+                DeactivateFontOverride(LocaleManagerCompat.GetInstance(Logger), "modDisabled");
                 TeardownTextMonitoring();
             }
         }
 
-
         private void RestoreOriginalFonts()
         {
-            _isChineseLocaleActive = false;
-
-            // 还原 TMP 默认字体
             var settings = TMP_Settings.instance;
             if (settings != null && _originalDefaultTmpFont != null)
             {
@@ -125,75 +89,89 @@ namespace FontReplace
                 }
                 else
                 {
-                    var prop = typeof(TMP_Settings).GetProperty("defaultFontAsset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (prop != null && prop.PropertyType == typeof(TMP_FontAsset) && prop.CanWrite)
+                    var property = typeof(TMP_Settings).GetProperty("defaultFontAsset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (property != null && property.CanWrite)
                     {
-                        prop.SetValue(settings, _originalDefaultTmpFont, null);
+                        property.SetValue(settings, _originalDefaultTmpFont, null);
                     }
                 }
             }
 
-            var texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
-            if (texts != null)
+            foreach (var record in _originalTmpFonts.Values)
             {
-                for (int i = 0; i < texts.Length; i++)
+                var text = record.Text;
+                if (text != null && text.font != null &&
+                    _replacementTmpFontIds.Contains(text.font.GetInstanceID()) && record.Font != null)
                 {
-                    var text = texts[i];
-                    if (text == null)
-                    {
-                        continue;
-                    }
-
-                    TMP_FontAsset original;
-                    if (_originalTmpFonts.TryGetValue(text.GetInstanceID(), out original) && original != null)
-                    {
-                        text.font = original;
-                    }
-                    else if (_originalDefaultTmpFont != null)
-                    {
-                        text.font = _originalDefaultTmpFont;
-                    }
-
+                    text.font = record.Font;
                     text.havePropertiesChanged = true;
                 }
             }
 
-            var uiTexts = Resources.FindObjectsOfTypeAll<Text>();
-            if (uiTexts != null)
+            foreach (var record in _originalUnityFonts.Values)
             {
-                for (int i = 0; i < uiTexts.Length; i++)
+                var text = record.Text;
+                if (text != null && text.font != null &&
+                    _replacementUnityFontIds.Contains(text.font.GetInstanceID()) && record.Font != null)
                 {
-                    var text = uiTexts[i];
-                    if (text == null)
-                    {
-                        continue;
-                    }
+                    text.font = record.Font;
+                }
+            }
 
-                    Font original;
-                    if (_originalUnityFonts.TryGetValue(text.GetInstanceID(), out original) && original != null)
-                    {
-                        text.font = original;
-                    }
+            _originalTmpFonts.Clear();
+            _originalUnityFonts.Clear();
+        }
+
+        private void RestoreFontsInExcludedScopes()
+        {
+            foreach (var record in _originalTmpFonts.Values)
+            {
+                var text = record.Text;
+                if (text != null && IsExcludedFontScope(text.transform) && text.font != null &&
+                    _replacementTmpFontIds.Contains(text.font.GetInstanceID()))
+                {
+                    text.font = record.Font;
+                    text.havePropertiesChanged = true;
+                }
+            }
+
+            foreach (var record in _originalUnityFonts.Values)
+            {
+                var text = record.Text;
+                if (text != null && IsExcludedFontScope(text.transform) && text.font != null &&
+                    _replacementUnityFontIds.Contains(text.font.GetInstanceID()))
+                {
+                    text.font = record.Font;
                 }
             }
         }
 
-        private bool ShouldKeepOriginalFont(string s)
+        private void RestoreOriginalFontIfTracked(TMP_Text text)
         {
-            if (_keepOriginalLatin == null || _keepOriginalDigits == null)
+            if (_originalTmpFonts.TryGetValue(text.GetInstanceID(), out var record) &&
+                ReferenceEquals(record.Text, text) && text.font != null &&
+                _replacementTmpFontIds.Contains(text.font.GetInstanceID()))
             {
-                return false;
+                text.font = record.Font;
+                text.havePropertiesChanged = true;
             }
+        }
 
+        private void RestoreOriginalFontIfTracked(Text text)
+        {
+            if (_originalUnityFonts.TryGetValue(text.GetInstanceID(), out var record) &&
+                ReferenceEquals(record.Text, text) && text.font != null &&
+                _replacementUnityFontIds.Contains(text.font.GetInstanceID()))
+            {
+                text.font = record.Font;
+            }
+        }
+
+        private bool ShouldKeepOriginalFont(string? value)
+        {
             bool checkLatin = _keepOriginalLatin.Value;
             bool checkDigits = _keepOriginalDigits.Value;
-
-            if (!checkLatin && !checkDigits)
-            {
-                return false;
-            }
-
-            if (string.IsNullOrEmpty(s))
+            if ((!checkLatin && !checkDigits) || string.IsNullOrEmpty(value))
             {
                 return false;
             }
@@ -203,11 +181,9 @@ namespace FontReplace
             bool foundDigit = false;
             bool foundNonAscii = false;
 
-            for (int i = 0; i < s.Length; i++)
+            for (int i = 0; i < value.Length; i++)
             {
-                char c = s[i];
-
-                // 忽略 TMP 富文本标签内容
+                char c = value[i];
                 if (c == '<')
                 {
                     inTag = true;
@@ -225,116 +201,105 @@ namespace FontReplace
                 if (c > 127 && !char.IsWhiteSpace(c))
                 {
                     foundNonAscii = true;
-                    // 不需要继续细分，直接标记即可
                     continue;
                 }
 
-                if (checkLatin)
+                if (checkLatin && ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')))
                 {
-                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                    {
-                        foundLatin = true;
-                    }
+                    foundLatin = true;
                 }
-
-                if (checkDigits)
+                if (checkDigits && c >= '0' && c <= '9')
                 {
-                    if (c >= '0' && c <= '9')
-                    {
-                        foundDigit = true;
-                    }
+                    foundDigit = true;
                 }
             }
 
-            // 含中文/俄文/全角/Emoji 等非 ASCII 内容：不要保留原版（避免“中文句子里夹着 AK-74”导致整段回退到原版字体）
-            if (foundNonAscii)
-            {
-                return false;
-            }
-
-            if (checkLatin && foundLatin)
-            {
-                return true;
-            }
-
-            if (checkDigits && foundDigit)
-            {
-                return true;
-            }
-
-            return false;
+            return !foundNonAscii && ((checkLatin && foundLatin) || (checkDigits && foundDigit));
         }
 
-
-        private void CacheOriginalFontIfNeeded(TMP_Text text)
+        private void CacheOriginalFontIfNeeded(TMP_Text? text)
         {
-            if (text == null)
+            if (text == null || text.font == null || _replacementTmpFontIds.Contains(text.font.GetInstanceID()))
             {
                 return;
             }
 
             int id = text.GetInstanceID();
-            if (_originalTmpFonts.ContainsKey(id))
+            if (_originalTmpFonts.TryGetValue(id, out var existing) && ReferenceEquals(existing.Text, text))
             {
                 return;
             }
 
-            // 只缓存“非覆盖字体”，避免把中文覆盖字体当成原版缓存
-            if (text.font != null && text.font != _chineseFontAsset)
-            {
-                _originalTmpFonts[id] = text.font;
-            }
+            _originalTmpFonts[id] = new OriginalTmpFontRecord { Text = text, Font = text.font };
         }
 
-
-        private void CacheOriginalFontIfNeeded(Text text)
+        private void CacheOriginalFontIfNeeded(Text? text)
         {
-            if (text == null)
+            if (text == null || text.font == null || _replacementUnityFontIds.Contains(text.font.GetInstanceID()))
             {
                 return;
             }
 
             int id = text.GetInstanceID();
-            if (_originalUnityFonts.ContainsKey(id))
+            if (_originalUnityFonts.TryGetValue(id, out var existing) && ReferenceEquals(existing.Text, text))
             {
                 return;
             }
 
-            if (text.font != null && text.font != _chineseUnityFont)
-            {
-                _originalUnityFonts[id] = text.font;
-            }
+            _originalUnityFonts[id] = new OriginalUiFontRecord { Text = text, Font = text.font };
         }
 
-
-        private TMP_FontAsset GetOriginalFont(TMP_Text text)
+        private TMP_FontAsset? GetOriginalFont(TMP_Text? text)
         {
-            TMP_FontAsset cached;
-            if (text != null && _originalTmpFonts.TryGetValue(text.GetInstanceID(), out cached) && cached != null)
+            if (text != null &&
+                _originalTmpFonts.TryGetValue(text.GetInstanceID(), out var record) &&
+                ReferenceEquals(record.Text, text) && record.Font != null)
             {
-                return cached;
+                return record.Font;
             }
 
-            if (_originalDefaultTmpFont != null)
-            {
-                return _originalDefaultTmpFont;
-            }
-
-            // 最后兜底：返回当前字体（可能已经是覆盖字体）
-            return text != null ? text.font : null;
+            return _originalDefaultTmpFont ?? text?.font;
         }
 
-
-        private Font GetOriginalFont(Text text)
+        private Font? GetOriginalFont(Text? text)
         {
-            Font cached;
-            if (text != null && _originalUnityFonts.TryGetValue(text.GetInstanceID(), out cached) && cached != null)
+            if (text != null &&
+                _originalUnityFonts.TryGetValue(text.GetInstanceID(), out var record) &&
+                ReferenceEquals(record.Text, text) && record.Font != null)
             {
-                return cached;
+                return record.Font;
             }
 
-            return text != null ? text.font : null;
+            return text?.font;
         }
 
+        private void PruneOriginalFontCaches()
+        {
+            var deadTmpIds = new List<int>();
+            foreach (var pair in _originalTmpFonts)
+            {
+                if (pair.Value.Text == null)
+                {
+                    deadTmpIds.Add(pair.Key);
+                }
+            }
+            for (int i = 0; i < deadTmpIds.Count; i++)
+            {
+                _originalTmpFonts.Remove(deadTmpIds[i]);
+            }
+
+            var deadUiIds = new List<int>();
+            foreach (var pair in _originalUnityFonts)
+            {
+                if (pair.Value.Text == null)
+                {
+                    deadUiIds.Add(pair.Key);
+                }
+            }
+            for (int i = 0; i < deadUiIds.Count; i++)
+            {
+                _originalUnityFonts.Remove(deadUiIds[i]);
+            }
+        }
     }
 }
